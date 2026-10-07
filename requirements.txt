@@ -1,3 +1,6 @@
 pywinauto>=0.6.8,<0.7
 pyperclip>=1.9,<2
 psutil>=5.9,<8
+Pillow>=10,<13
+pytesseract>=0.3.10,<0.4
+pywin32>=306,<400

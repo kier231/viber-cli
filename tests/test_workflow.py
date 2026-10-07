@@ -35,6 +35,29 @@ class FakeClient:
         self.sent.append(text)
 
 
+class FakeBackgroundClient:
+    instances = []
+    detected = "Viber Person"
+
+    def __init__(self, debug=False):
+        self.opened = []
+        self.sent = []
+        self.instances.append(self)
+
+    def connect(self):
+        return self
+
+    def open_phone(self, phone):
+        self.opened.append(phone)
+        return self.detected
+
+    def send_message(self, text):
+        self.sent.append(text)
+
+    def verify_current_name(self, expected):
+        return expected == self.detected
+
+
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -42,6 +65,7 @@ class WorkflowTests(unittest.TestCase):
         self.lead = self.store.create_with_android("+381641234567", "Test Company",
                                                    lambda name, phone: None)
         FakeClient.instances.clear()
+        FakeBackgroundClient.instances.clear()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -83,11 +107,26 @@ class WorkflowTests(unittest.TestCase):
             prompt.assert_not_called()
         self.assertEqual(FakeClient.instances[-1].sent, [])
 
-    def test_chat_command_never_takes_focus_by_default(self):
+    def test_background_open_records_viber_name_without_renaming_contact(self):
         args = argparse.Namespace(command="open", lead_id=1, debug=False)
-        with self.assertRaisesRegex(ViberError, "takes Windows focus"):
-            dispatch(args, self.store, client_factory=FakeClient)
+        dispatch(args, self.store, client_factory=FakeClient,
+                 background_factory=FakeBackgroundClient)
+        lead = self.store.get(1)
+        self.assertEqual(lead.viber_name, "Viber Person")
+        self.assertEqual(lead.company_name, "Test Company")
+        self.assertEqual(lead.contact_name, "Test Company | SJT-1")
+        self.assertEqual(FakeBackgroundClient.instances[-1].opened, [lead.phone])
         self.assertEqual(FakeClient.instances, [])
+
+    def test_background_name_mismatch_blocks_send_before_prompt(self):
+        self.store.set_viber_name(1, "Another Person")
+        args = argparse.Namespace(command="send", lead_id=1, message="Hello", debug=False)
+        with patch("builtins.input") as prompt:
+            with self.assertRaisesRegex(ViberError, "No message was sent"):
+                dispatch(args, self.store, client_factory=FakeClient,
+                         background_factory=FakeBackgroundClient)
+            prompt.assert_not_called()
+        self.assertEqual(FakeBackgroundClient.instances[-1].sent, [])
 
     def test_read_current_keeps_messages_when_header_is_inaccessible(self):
         class NoHeaderClient(FakeClient):

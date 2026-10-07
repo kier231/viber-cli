@@ -10,6 +10,7 @@ from app.android_contacts import AndroidContactError, add_android_contact
 from app.models import LeadStore
 from app.phone import extract_lead_id, normalize_serbian_phone
 from app.viber import ViberClient, ViberError
+from app.viber_background import BackgroundViberClient
 
 
 DEFAULT_DB = Path(__file__).resolve().parent / "leads.sqlite3"
@@ -50,21 +51,24 @@ def _print_messages(messages) -> None:
     print("-" * 50)
 
 
-def _confirm_send(client: ViberClient, lead, message: str) -> bool:
+def _confirm_send(client, lead, message: str) -> bool:
     print(f"\nContact:\n{lead.contact_name}\n")
+    if lead.viber_name:
+        print(f"Viber name:\n{lead.viber_name}\n")
     print(f"Phone:\n{lead.phone}\n")
     print(f"Message:\n{message}\n")
     if input("Send? [y/N]: ") != "y":
         print("Cancelled. No message was sent.")
         return False
-    # send_message performs a fresh search and header verification after input.
+    # Each adapter checks the recipient again immediately before dispatch.
     client.send_message(message)
-    print("SENT (Enter dispatched to Viber; delivery is not verified).")
+    print("SENT (send action dispatched to Viber; delivery is not verified).")
     return True
 
 
 def dispatch(args, store: LeadStore, client_factory=ViberClient,
-             android_add=add_android_contact) -> None:
+             android_add=add_android_contact,
+             background_factory=BackgroundViberClient) -> None:
     if args.command == "add-contact":
         phone = normalize_serbian_phone(args.phone)
         lead = store.create_with_android(phone, args.company, android_add)
@@ -91,10 +95,37 @@ def dispatch(args, store: LeadStore, client_factory=ViberClient,
         print(f"Android contact remains: {lead.contact_name}")
         return
     if args.command in {"open", "send", "read", "chat"} and not getattr(args, "foreground", False):
-        raise ViberError(
-            "Viber Desktop chat control takes Windows focus on this build. "
-            "Use --foreground only when you are ready to give Viber focus; "
-            "no verified background Desktop mode is available.")
+        lead = _lead(store, args.lead_id)
+        client = background_factory(debug=args.debug).connect()
+        print(f"Opening number for lead {lead.id} in background...")
+        detected = client.open_phone(lead.phone)
+        if lead.viber_name and detected != lead.viber_name:
+            raise ViberError(
+                f"Viber showed {detected!r}, but lead {lead.id} stores "
+                f"{lead.viber_name!r}. No message was sent.")
+        if not lead.viber_name and lead.company_name not in detected and "SJT-" not in detected:
+            store.set_viber_name(lead.id, detected)
+            lead = _lead(store, lead.id)
+            print(f"Saved Viber name: {detected}")
+        print(f"Detected Viber chat: {detected}")
+        if args.command == "open":
+            print("Conversation opened without taking Windows focus.")
+        elif args.command == "send":
+            _confirm_send(client, lead, args.message)
+        elif args.command == "read":
+            _print_messages(client.read_messages())
+        else:
+            while True:
+                line = input("Type message, /read, or /exit:\n> ")
+                if line == "/exit":
+                    break
+                if line == "/read":
+                    if not client.verify_current_name(detected):
+                        raise ViberError("Conversation changed; /read aborted.")
+                    _print_messages(client.read_messages())
+                elif line.strip():
+                    _confirm_send(client, lead, line)
+        return
     client = client_factory(debug=args.debug)
     if args.command == "inspect":
         client.connect()
@@ -143,7 +174,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="viber-cli")
     parser.add_argument("--debug", action="store_true", help="Print UI selector diagnostics")
     parser.add_argument("--foreground", action="store_true",
-                        help="Allow Desktop chat commands to take Windows focus")
+                        help="Use the older foreground contact-name search instead of the dial pad")
     subs = parser.add_subparsers(dest="command")
     subs.add_parser("inspect", help="Print the Viber UI Automation hierarchy")
     add = subs.add_parser("add-contact", help="Add a verified Android contact")
@@ -202,9 +233,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     # Accept global flags before or after the subcommand.
-    debug = "--debug" in argv
-    foreground = "--foreground" in argv
-    argv = [arg for arg in argv if arg not in {"--debug", "--foreground"}]
+    option_end = argv.index("--") if "--" in argv else len(argv)
+    debug = "--debug" in argv[:option_end]
+    foreground = "--foreground" in argv[:option_end]
+    argv = [arg for index, arg in enumerate(argv)
+            if index >= option_end or arg not in {"--debug", "--foreground"}]
     options = (["--debug"] if debug else []) + (["--foreground"] if foreground else [])
     args = parser.parse_args(options + argv)
     store = LeadStore(os.environ.get("VIBER_CLI_DB", DEFAULT_DB))

@@ -1,19 +1,25 @@
 # viber-cli
 
 A manual Windows console tool for keeping an Android contact ledger and opening,
-sending to, or reading the currently visible Viber Desktop conversation. There
-are no workers, schedules, AI features, automatic replies, or message queues.
+sending to, or reading Viber Desktop chats. The default chat path enters a phone
+number on Viber's dial pad and presses its message button without moving the
+Windows mouse or taking keyboard focus. There are no workers, schedules, AI
+features, automatic replies, or message queues.
 
 ## Requirements
 
 - Windows 11 and Python 3.12 or newer.
-- Viber Desktop installed, running, logged in, and displaying its normal main window.
+- Viber Desktop installed, running, logged in, and restored behind your other
+  windows (not minimized). The background controls were validated on the Viber
+  Qt build installed on this PC; another build may expose different controls.
+- Tesseract OCR available on `PATH`, with `eng` and `srp_latn` language data.
+  The CLI uses it to read the chat header from a background window capture.
 - Android Platform Tools (`adb`), USB debugging authorized, and exactly one
   usable device connected. The CLI checks `PATH`, common Windows install paths
   (including `C:\adb\platform-tools`), and `VIBER_CLI_ADB`.
-- Viber on the phone; contacts must sync to Viber Desktop before search works.
-- A foreground, unlocked Windows session. UI Automation and clipboard paste
-  need the desktop; they cannot run in a disconnected background session.
+- An unlocked Windows session. The background mode leaves your foreground app,
+  system mouse, keyboard, and clipboard alone. It cannot run in a disconnected
+  Windows session.
 
 Check your Python version, create a virtual environment, and install packages:
 
@@ -44,7 +50,8 @@ running and logged in.
 type, and automation ID. It does not send anything. Inspect first on the Viber
 version actually installed. Search, header, composer, and message exposure vary
 by version. On the tested Viber Desktop build, the recipient header is not
-exposed through UI Automation, so recipient-specific commands stop safely.
+exposed through UI Automation, so background commands read it from a window
+capture. If the header cannot be read, sending stops.
 
 ## Commands
 
@@ -52,32 +59,36 @@ exposed through UI Automation, so recipient-specific commands stop safely.
 .\.venv\Scripts\python.exe main.py add-contact "+381641234567" "Auto Servis Markovic"
 .\.venv\Scripts\python.exe main.py contacts
 .\.venv\Scripts\python.exe main.py set-viber-name 1 "Person's Viber name"
-.\.venv\Scripts\python.exe main.py --foreground open 1
-.\.venv\Scripts\python.exe main.py --foreground send 1 "Pozdrav, hteo sam nesto da vas pitam."
-.\.venv\Scripts\python.exe main.py --foreground read 1
-.\.venv\Scripts\python.exe main.py --foreground chat 1
+.\.venv\Scripts\python.exe main.py open 1
+.\.venv\Scripts\python.exe main.py send 1 "Pozdrav, hteo sam nesto da vas pitam."
+.\.venv\Scripts\python.exe main.py read 1
+.\.venv\Scripts\python.exe main.py chat 1
 .\.venv\Scripts\python.exe main.py read-current
 .\.venv\Scripts\python.exe main.py --debug inspect
 .\.venv\Scripts\python.exe main.py
 ```
 
 `chat` accepts `/read` and `/exit`. The menu calls the same command functions.
-`open`, `send`, `read <id>`, and `chat` require `--foreground` because the tested
-Desktop search field takes focus even when written through UI Automation. They
-stop before touching Viber when the flag is absent. `contacts`,
-`set-viber-name`, `inspect`, and `read-current` do not use foreground input.
-Only a literal lowercase `y` at a send prompt authorizes sending. Each send
-searches again, opens the unique matching result, and checks the exact
-conversation name and `SJT-{id}` tag before paste and again before Enter.
-Messages are pasted through the clipboard, one line at a time. `SENT` means
-Enter was dispatched to Viber; it is not a delivery receipt.
+`open`, `send`, `read <id>`, and `chat` use the dial pad in background by default.
+Use `--foreground` only to try the older contact-name search, which takes focus
+and may fail on this Viber build because its header is not accessible.
+
+Only a literal lowercase `y` at a send prompt authorizes sending. Background
+mode reads back each dial-pad digit, presses the message icon, and checks a
+stable chat name from a Windows `PrintWindow` capture. `Unknown`, unreadable,
+or changed headers block sending. It also checks the draft and chat name again
+before posting the Send button click. Background typing supports one line of
+plain text with Serbian Latin characters, but not emoji. `SENT` means the draft
+cleared after the click; it is not a delivery receipt.
 
 The SQLite database is `leads.sqlite3` next to `main.py`. Set `VIBER_CLI_DB` to
 an alternate path. The database stores `id`, `phone`, `company_name`,
 `viber_name`, `contact_name`, and `created_at`. It does not contain messages.
 Existing databases gain the nullable `viber_name` field automatically. The
 `set-viber-name` command records a name you have verified in Viber; it does not
-rename the business or Android contact. Unknown names remain empty.
+rename the business or Android contact. A successful background `open` also
+records the name shown in Viber when it differs from the business and Android
+contact names. Unknown names remain empty.
 
 ## Android contact behavior
 
@@ -103,11 +114,12 @@ make Android row creation atomic in a future device-side implementation.
 
 ## Viber accessibility limits
 
-The adapter uses `pywinauto` with the `uia` backend. It uses accessible control
-names/types and relative positions inside the Viber window, with no OCR or
-fixed screen coordinates. If a unique search result, header, or composer is
-not accessible, the command stops. Run `inspect` and update the isolated
-selectors in `app/viber.py` for that Viber version.
+The adapter uses `pywinauto` with the `uia` backend to locate controls. The
+background path posts mouse messages directly to Viber's window and uses OCR
+on a captured header. It does not use screen coordinates, the system pointer,
+or the clipboard. If the controls or header differ on another Viber version,
+the command stops. Run `inspect` and update the isolated selectors in
+`app/viber_background.py` for that Viber version.
 
 `read` reports text elements visible in the current conversation viewport.
 It does not scroll to fetch old history. If explicit accessibility metadata
@@ -117,17 +129,12 @@ expose no usable message elements at all. Compare initial read output with the
 visible chat before relying on it. Some Viber Qt/QML builds expose message
 contents as UIA `Edit` values but omit the conversation header entirely.
 `read-current` still prints visible messages in that case and labels the contact
-as unavailable. `open`, `read <id>`, and `send` stop when they cannot verify the
-exact recipient; there is no OCR fallback or recipient guess.
-
-Viber Desktop's dial pad is for Viber Out calls. Entering a number there does
-not establish a verified message chat. The current Desktop adapter also uses
-foreground clicks and typing for chat search and sending, and this Viber build
-does not expose a usable recipient header through UI Automation. It therefore
-cannot safely run `open` or `send` while you use the Windows mouse and keyboard.
-Do not treat the `set-viber-name` command as automatic discovery of a Viber
-profile. Phone-side Viber automation would leave the Windows desktop free, but
-it requires an unlocked phone and verified recipient controls before sending.
+as unavailable. `open`, `read <id>`, and `send` stop when background header OCR
+or the dial-pad controls cannot verify a named chat. Viber's dial pad has both
+Call and Message buttons on the tested build; the CLI uses only Message.
+OCR can misread unusual display names. Check the stored `viber_name` in
+`contacts` and correct it with `set-viber-name` if needed. The CLI will stop if
+a later chat header differs from the stored name.
 
 ## Tests
 
@@ -136,8 +143,10 @@ it requires an unlocked phone and verified recipient controls before sending.
 ```
 
 Tests cover phone normalization, ID extraction, database rollback, and the
-send confirmation and header gate. Live Viber/Android integration remains to
-be validated on the target devices, in the requested phase order.
+send confirmation and header gate. The background dial pad and name capture
+were also tested against the installed Viber Desktop without sending a live
+message. Final delivery behavior remains unverified until an explicitly
+confirmed send is performed.
 
 References: [Android ADB](https://developer.android.com/tools/adb),
 [Contacts Provider](https://developer.android.com/identity/providers/contacts-provider),
