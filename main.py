@@ -90,6 +90,11 @@ def dispatch(args, store: LeadStore, client_factory=ViberClient,
         print(f"Saved Viber name for lead {lead.id}: {store.get(lead.id).viber_name}")
         print(f"Android contact remains: {lead.contact_name}")
         return
+    if args.command in {"open", "send", "read", "chat"} and not getattr(args, "foreground", False):
+        raise ViberError(
+            "Viber Desktop chat control takes Windows focus on this build. "
+            "Use --foreground only when you are ready to give Viber focus; "
+            "no verified background Desktop mode is available.")
     client = client_factory(debug=args.debug)
     if args.command == "inspect":
         client.connect()
@@ -137,6 +142,8 @@ def dispatch(args, store: LeadStore, client_factory=ViberClient,
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="viber-cli")
     parser.add_argument("--debug", action="store_true", help="Print UI selector diagnostics")
+    parser.add_argument("--foreground", action="store_true",
+                        help="Allow Desktop chat commands to take Windows focus")
     subs = parser.add_subparsers(dest="command")
     subs.add_parser("inspect", help="Print the Viber UI Automation hierarchy")
     add = subs.add_parser("add-contact", help="Add a verified Android contact")
@@ -155,7 +162,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _menu(parser, store: LeadStore, debug: bool) -> None:
+def _menu(parser, store: LeadStore, debug: bool, foreground: bool) -> None:
     commands = {
         "1": lambda: ["add-contact", input("Phone: "), input("Company: ")],
         "2": lambda: ["contacts"],
@@ -179,7 +186,8 @@ def _menu(parser, store: LeadStore, debug: bool) -> None:
             continue
         try:
             parts = commands[choice]()
-            parsed = parser.parse_args((["--debug"] if debug else []) + parts)
+            options = (["--debug"] if debug else []) + (["--foreground"] if foreground else [])
+            parsed = parser.parse_args(options + parts)
             dispatch(parsed, store)
         except (ValueError, AndroidContactError, ViberError, sqlite3.Error) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
@@ -193,14 +201,16 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = _parser()
     argv = list(sys.argv[1:] if argv is None else argv)
-    # Accept --debug before or after the subcommand.
+    # Accept global flags before or after the subcommand.
     debug = "--debug" in argv
-    argv = [arg for arg in argv if arg != "--debug"]
-    args = parser.parse_args((["--debug"] if debug else []) + argv)
+    foreground = "--foreground" in argv
+    argv = [arg for arg in argv if arg not in {"--debug", "--foreground"}]
+    options = (["--debug"] if debug else []) + (["--foreground"] if foreground else [])
+    args = parser.parse_args(options + argv)
     store = LeadStore(os.environ.get("VIBER_CLI_DB", DEFAULT_DB))
     try:
         if args.command is None:
-            _menu(parser, store, args.debug)
+            _menu(parser, store, args.debug, args.foreground)
         else:
             dispatch(args, store)
     except (ValueError, AndroidContactError, ViberError, sqlite3.Error) as exc:

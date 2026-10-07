@@ -52,16 +52,20 @@ exposed through UI Automation, so recipient-specific commands stop safely.
 .\.venv\Scripts\python.exe main.py add-contact "+381641234567" "Auto Servis Markovic"
 .\.venv\Scripts\python.exe main.py contacts
 .\.venv\Scripts\python.exe main.py set-viber-name 1 "Person's Viber name"
-.\.venv\Scripts\python.exe main.py open 1
-.\.venv\Scripts\python.exe main.py send 1 "Pozdrav, hteo sam nesto da vas pitam."
-.\.venv\Scripts\python.exe main.py read 1
-.\.venv\Scripts\python.exe main.py chat 1
+.\.venv\Scripts\python.exe main.py --foreground open 1
+.\.venv\Scripts\python.exe main.py --foreground send 1 "Pozdrav, hteo sam nesto da vas pitam."
+.\.venv\Scripts\python.exe main.py --foreground read 1
+.\.venv\Scripts\python.exe main.py --foreground chat 1
 .\.venv\Scripts\python.exe main.py read-current
 .\.venv\Scripts\python.exe main.py --debug inspect
 .\.venv\Scripts\python.exe main.py
 ```
 
 `chat` accepts `/read` and `/exit`. The menu calls the same command functions.
+`open`, `send`, `read <id>`, and `chat` require `--foreground` because the tested
+Desktop search field takes focus even when written through UI Automation. They
+stop before touching Viber when the flag is absent. `contacts`,
+`set-viber-name`, `inspect`, and `read-current` do not use foreground input.
 Only a literal lowercase `y` at a send prompt authorizes sending. Each send
 searches again, opens the unique matching result, and checks the exact
 conversation name and `SJT-{id}` tag before paste and again before Enter.

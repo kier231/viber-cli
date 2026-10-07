@@ -64,7 +64,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(FakeClient.instances, [])
 
     def test_send_requires_exact_y(self):
-        args = argparse.Namespace(command="send", lead_id=1, message="Hello", debug=False)
+        args = argparse.Namespace(command="send", lead_id=1, message="Hello",
+                                  debug=False, foreground=True)
         with patch("builtins.input", return_value="yes"):
             dispatch(args, self.store, client_factory=FakeClient)
         self.assertEqual(FakeClient.instances[-1].sent, [])
@@ -74,12 +75,19 @@ class WorkflowTests(unittest.TestCase):
             def __init__(self, debug=False):
                 super().__init__(debug)
                 self.header = "Another Company | SJT-1"
-        args = argparse.Namespace(command="send", lead_id=1, message="Hello", debug=False)
+        args = argparse.Namespace(command="send", lead_id=1, message="Hello",
+                                  debug=False, foreground=True)
         with patch("builtins.input") as prompt:
             with self.assertRaises(ViberError):
                 dispatch(args, self.store, client_factory=WrongClient)
             prompt.assert_not_called()
         self.assertEqual(FakeClient.instances[-1].sent, [])
+
+    def test_chat_command_never_takes_focus_by_default(self):
+        args = argparse.Namespace(command="open", lead_id=1, debug=False)
+        with self.assertRaisesRegex(ViberError, "takes Windows focus"):
+            dispatch(args, self.store, client_factory=FakeClient)
+        self.assertEqual(FakeClient.instances, [])
 
     def test_read_current_keeps_messages_when_header_is_inaccessible(self):
         class NoHeaderClient(FakeClient):
