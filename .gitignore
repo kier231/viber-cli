@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+leads.sqlite3
+leads.sqlite3-*
+*.db
