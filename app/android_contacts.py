@@ -1,5 +1,7 @@
 """ADB Contacts Provider adapter. Fails closed when shell access is denied."""
 
+import os
+from pathlib import Path
 import re
 import shlex
 import shutil
@@ -8,6 +10,33 @@ import subprocess
 
 class AndroidContactError(RuntimeError):
     pass
+
+
+def _find_adb() -> str:
+    configured = os.environ.get("VIBER_CLI_ADB")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return str(candidate)
+        raise AndroidContactError(f"VIBER_CLI_ADB does not point to a file: {configured}")
+
+    on_path = shutil.which("adb")
+    if on_path:
+        return on_path
+
+    roots = [Path(r"C:\adb\platform-tools"), Path(r"C:\platform-tools")]
+    for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        if os.environ.get(variable):
+            roots.append(Path(os.environ[variable]) / "platform-tools")
+    if os.environ.get("LOCALAPPDATA"):
+        roots.append(Path(os.environ["LOCALAPPDATA"]) / "Android" / "Sdk" / "platform-tools")
+    for root in roots:
+        candidate = root / "adb.exe"
+        if candidate.is_file():
+            return str(candidate)
+    raise AndroidContactError(
+        "ADB was not found. Install Android Platform Tools or set VIBER_CLI_ADB "
+        "to the full path of adb.exe.")
 
 
 def _run_adb(adb: str, serial: str | None, args: list[str]) -> str:
@@ -72,9 +101,7 @@ def add_android_contact(name: str, phone: str) -> None:
     function reports that failure; it never treats opening an edit screen as
     proof that a contact was saved.
     """
-    adb = shutil.which("adb")
-    if not adb:
-        raise AndroidContactError("ADB is not installed or not on PATH.")
+    adb = _find_adb()
     serial = _one_device(adb)
     raw_id = None
     try:

@@ -8,27 +8,37 @@ are no workers, schedules, AI features, automatic replies, or message queues.
 
 - Windows 11 and Python 3.12 or newer.
 - Viber Desktop installed, running, logged in, and displaying its normal main window.
-- Android Platform Tools (`adb`) on `PATH`, USB debugging authorized, and exactly
-  one usable device connected.
+- Android Platform Tools (`adb`), USB debugging authorized, and exactly one
+  usable device connected. The CLI checks `PATH`, common Windows install paths
+  (including `C:\adb\platform-tools`), and `VIBER_CLI_ADB`.
 - Viber on the phone; contacts must sync to Viber Desktop before search works.
 - A foreground, unlocked Windows session. UI Automation and clipboard paste
   need the desktop; they cannot run in a disconnected background session.
 
-Install Python packages:
+Check your Python version, create a virtual environment, and install packages:
 
 ```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python --version
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Use another installed Python version of 3.12+ if `py -3.12` is unavailable.
-Verify Android before adding a contact:
+Use any installed Python version of 3.12 or newer. For example, Python 3.13
+works; `py -3.12` fails when 3.12 is not installed. The commands above do not
+require PowerShell activation. If you prefer activation, use
+`.\.venv\Scripts\Activate.ps1` after creating the environment.
+
+Verify the phone and inspect Viber before adding a contact:
 
 ```powershell
-adb devices -l
-python main.py inspect
+& 'C:\adb\platform-tools\adb.exe' devices -l
+.\.venv\Scripts\python.exe main.py inspect
 ```
+
+If ADB is installed elsewhere, set its path for this PowerShell session with
+`$env:VIBER_CLI_ADB = 'C:\path\to\platform-tools\adb.exe'`. The CLI also
+accepts `adb` on `PATH` automatically. `inspect` requires Viber Desktop to be
+running and logged in.
 
 `inspect` prints the entire accessible Viber subtree, including control name,
 type, and automation ID. It does not send anything. Inspect first on the Viber
@@ -38,15 +48,15 @@ by version; this project has not been tested against a live Viber instance yet.
 ## Commands
 
 ```powershell
-python main.py add-contact "+381641234567" "Auto Servis Markovic"
-python main.py contacts
-python main.py open 1
-python main.py send 1 "Pozdrav, hteo sam nesto da vas pitam."
-python main.py read 1
-python main.py chat 1
-python main.py read-current
-python main.py --debug inspect
-python main.py
+.\.venv\Scripts\python.exe main.py add-contact "+381641234567" "Auto Servis Markovic"
+.\.venv\Scripts\python.exe main.py contacts
+.\.venv\Scripts\python.exe main.py open 1
+.\.venv\Scripts\python.exe main.py send 1 "Pozdrav, hteo sam nesto da vas pitam."
+.\.venv\Scripts\python.exe main.py read 1
+.\.venv\Scripts\python.exe main.py chat 1
+.\.venv\Scripts\python.exe main.py read-current
+.\.venv\Scripts\python.exe main.py --debug inspect
+.\.venv\Scripts\python.exe main.py
 ```
 
 `chat` accepts `/read` and `/exit`. The menu calls the same command functions.
@@ -97,7 +107,7 @@ fails rather than naming the wrong chat.
 ## Tests
 
 ```powershell
-python -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 Tests cover phone normalization, ID extraction, database rollback, and the
