@@ -73,10 +73,15 @@ an alternate path. The database stores only `id`, `phone`, `company_name`,
 ## Android contact behavior
 
 `add-contact` normalizes a Serbian number to `+381...`, reserves the next ID,
-then uses ADB's Contacts Provider commands to insert a raw contact with a name
-and phone data row. It reads both rows back before committing the SQLite lead.
+then uses ADB's Contacts Provider commands to insert a raw contact with a unique
+`sync1` marker, followed by a name and phone data row. Android's `content insert`
+command can print nothing on success, so the CLI queries that marker
+to find the new raw-contact ID. It reads the name and phone rows back before
+committing the SQLite lead.
 If insertion or verification fails, it reports an error and rolls back the
-local row. It attempts to remove a partially inserted Android raw contact.
+local row. It attempts to remove a partially inserted Android raw contact. If
+Android does not expose the marker after insertion, the error includes the
+marker because an empty raw contact may remain on the device.
 
 Android builds can deny Contacts Provider access to the ADB shell. In that case
 this version cannot add a contact on that phone and will fail explicitly. A
@@ -116,4 +121,5 @@ be validated on the target devices, in the requested phase order.
 
 References: [Android ADB](https://developer.android.com/tools/adb),
 [Contacts Provider](https://developer.android.com/identity/providers/contacts-provider),
+[Android `content` command source](https://android.googlesource.com/platform/frameworks/base/+/6589d834619d/cmds/content/src/com/android/commands/content/Content.java),
 [pywinauto UIA](https://pywinauto.readthedocs.io/en/latest/getting_started.html).
