@@ -105,9 +105,11 @@ It does not scroll to fetch old history. If explicit accessibility metadata
 does not identify message direction, output uses `MESSAGE` rather than a
 guess. Viber may expose dates or other chat text as message elements, or may
 expose no usable message elements at all. Compare initial read output with the
-visible chat before relying on it. `read-current` can identify an SJT-tagged
-chat or a non-tagged chat with an explicit header automation ID; it otherwise
-fails rather than naming the wrong chat.
+visible chat before relying on it. Some Viber Qt/QML builds expose message
+contents as UIA `Edit` values but omit the conversation header entirely.
+`read-current` still prints visible messages in that case and labels the contact
+as unavailable. `open`, `read <id>`, and `send` stop when they cannot verify the
+exact recipient; there is no OCR fallback or recipient guess.
 
 ## Tests
 

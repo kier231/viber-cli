@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from app.models import LeadStore
+from app.models import LeadStore, Message
 from app.viber import ViberError
 from main import dispatch
 
@@ -70,6 +70,23 @@ class WorkflowTests(unittest.TestCase):
                 dispatch(args, self.store, client_factory=WrongClient)
             prompt.assert_not_called()
         self.assertEqual(FakeClient.instances[-1].sent, [])
+
+    def test_read_current_keeps_messages_when_header_is_inaccessible(self):
+        class NoHeaderClient(FakeClient):
+            def get_current_contact_name(self):
+                raise ViberError("No accessible header")
+
+            def read_messages(self):
+                return [Message("Visible text")]
+
+        args = argparse.Namespace(command="read-current", debug=False)
+        from contextlib import redirect_stdout
+        from io import StringIO
+        output = StringIO()
+        with redirect_stdout(output):
+            dispatch(args, self.store, client_factory=NoHeaderClient)
+        self.assertIn("Unavailable through UI Automation", output.getvalue())
+        self.assertIn("MESSAGE:\nVisible text", output.getvalue())
 
 
 if __name__ == "__main__":

@@ -192,6 +192,11 @@ class ViberClient:
 
     def _composer(self):
         win = self.window.rectangle()
+        by_id = [n for n in self._nodes() if self._type(n) == "Edit" and
+                 "QQuickTextEdit" in self._auto_id(n) and
+                 self._center(n)[0] > win.left + win.width() * .5]
+        if len(by_id) == 1:
+            return by_id[0]
         edits = [n for n in self._nodes() if self._type(n) == "Edit" and
                  self._center(n)[0] > win.left + win.width() * .5 and
                  self._center(n)[1] > win.top + win.height() * .65]
@@ -231,25 +236,23 @@ class ViberClient:
         Direction is emitted only when an ancestor has explicit accessibility
         metadata saying incoming/outgoing. Scrolling history is out of scope.
         """
-        header = self._header()
-        win = self.window.rectangle()
+        panes = [n for n in self._nodes() if self._type(n) == "Pane" and
+                 re.search(r"\.StackView_QMLTYPE_\d+$", self._auto_id(n))]
+        if len(panes) != 1:
+            raise ViberError("Could not identify one Viber conversation pane. Run inspect.")
+        pane = panes[0]
+        bounds = pane.rectangle()
         try:
             bottom = self._composer().rectangle().top
         except ViberError:
-            bottom = win.bottom - win.height() * .15
-        top = header.rectangle().bottom
-        messages = []
-        for node in self._nodes():
-            if self._type(node) != "Text":
-                continue
-            value = self._name(node)
-            if not value:
-                continue
-            x, y = self._center(node)
-            if x <= win.left + win.width() * .5 or not top < y < bottom:
-                continue
-            if re.fullmatch(r"\d{1,2}:\d{2}(?:\s*[AP]M)?", value, re.I):
-                continue
+            bottom = bounds.bottom
+
+        def visible(node) -> bool:
+            rect = node.rectangle()
+            return (rect.bottom > bounds.top and rect.top < bottom and
+                    rect.right > bounds.left and rect.left < bounds.right)
+
+        def direction_for(node) -> str:
             direction = "MESSAGE"
             parent = node
             for _ in range(3):
@@ -264,7 +267,33 @@ class ViberClient:
                 if re.search(r"\b(?:incoming|received message)\b", label):
                     direction = "THEM"
                     break
-            messages.append((node.rectangle().top, node.rectangle().left,
-                             Message(value, direction)))
+            return direction
+
+        messages = []
+        groups = [n for n in pane.descendants() if self._type(n) == "Group" and
+                  "FeedDelegate" in self._auto_id(n) and visible(n)]
+        for group in groups:
+            for node in group.descendants():
+                if self._type(node) != "Edit" or not visible(node):
+                    continue
+                try:
+                    value = node.get_value().strip()
+                except Exception:
+                    continue
+                if value:
+                    rect = node.rectangle()
+                    messages.append((rect.top, rect.left,
+                                     Message(value, direction_for(node))))
+        if not messages:
+            # Some Viber builds expose chat bubbles as Text rather than Edit.
+            for node in pane.descendants():
+                if self._type(node) != "Text" or not visible(node):
+                    continue
+                value = self._name(node)
+                if not value or re.fullmatch(r"\d{1,2}:\d{2}(?:\s*[AP]M)?", value, re.I):
+                    continue
+                rect = node.rectangle()
+                messages.append((rect.top, rect.left,
+                                 Message(value, direction_for(node))))
         messages.sort(key=lambda item: (item[0], item[1]))
         return [message for _, _, message in messages]

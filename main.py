@@ -25,7 +25,10 @@ def _lead(store: LeadStore, lead_id: int):
 def _open_verified(client: ViberClient, lead) -> str:
     print(f"Opening {lead.contact_name}...")
     client.connect()
-    client.search_contact(lead.contact_name)
+    try:
+        client.search_contact(lead.contact_name)
+    except ViberError as exc:
+        raise ViberError(f"Could not verify conversation: {exc} No message was sent.") from exc
     try:
         detected = client.get_current_contact_name()
     except ViberError as exc:
@@ -85,10 +88,13 @@ def dispatch(args, store: LeadStore, client_factory=ViberClient,
         client.inspect()
     elif args.command == "read-current":
         client.connect()
-        name = client.get_current_contact_name()
-        lead_id = extract_lead_id(name)
+        try:
+            name = client.get_current_contact_name()
+        except ViberError:
+            name = None
+        lead_id = extract_lead_id(name) if name else None
         lead = store.get(lead_id) if lead_id else None
-        print(f"Contact:\n{name}\n")
+        print(f"Contact:\n{name or 'Unavailable through UI Automation'}\n")
         print(f"Detected lead:\n{lead_id if lead and lead.contact_name == name else 'none'}\n")
         print("Messages:")
         _print_messages(client.read_messages())
@@ -167,6 +173,11 @@ def _menu(parser, store: LeadStore, debug: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # PowerShell redirection can give Python a legacy Windows output encoding.
+    # Chat text may contain Serbian diacritics or emoji.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = _parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     # Accept --debug before or after the subcommand.
