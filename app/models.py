@@ -13,6 +13,7 @@ class Lead:
     id: int
     phone: str
     company_name: str
+    viber_name: str | None
     contact_name: str
     created_at: str
 
@@ -33,9 +34,13 @@ class LeadStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     phone TEXT NOT NULL,
                     company_name TEXT NOT NULL,
+                    viber_name TEXT,
                     contact_name TEXT NOT NULL,
                     created_at DATETIME NOT NULL
                 )""")
+                columns = {row[1] for row in db.execute("PRAGMA table_info(leads)")}
+                if "viber_name" not in columns:
+                    db.execute("ALTER TABLE leads ADD COLUMN viber_name TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -63,7 +68,7 @@ class LeadStore:
             add_contact(name, phone)  # Must verify creation or raise.
             db.execute("UPDATE leads SET contact_name = ? WHERE id = ?", (name, lead_id))
             db.commit()
-            return Lead(lead_id, phone, company, name, created_at)
+            return Lead(lead_id, phone, company, None, name, created_at)
         except Exception:
             db.rollback()
             raise
@@ -79,3 +84,16 @@ class LeadStore:
         with closing(self._connect()) as db:
             rows = db.execute("SELECT * FROM leads ORDER BY id").fetchall()
         return [Lead(**dict(row)) for row in rows]
+
+    def set_viber_name(self, lead_id: int, name: str) -> None:
+        if not isinstance(name, str) or any(ord(c) < 32 for c in name):
+            raise ValueError("Viber name must be text without control characters.")
+        name = " ".join(name.split())
+        if not name or len(name) > 120:
+            raise ValueError("Viber name must contain 1 to 120 characters.")
+        with closing(self._connect()) as db:
+            with db:
+                row = db.execute("UPDATE leads SET viber_name = ? WHERE id = ?",
+                                 (name, lead_id))
+                if row.rowcount != 1:
+                    raise ValueError(f"Lead {lead_id} does not exist.")

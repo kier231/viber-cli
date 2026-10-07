@@ -53,6 +53,16 @@ class WorkflowTests(unittest.TestCase):
             self.store.create_with_android("+381651234567", "Second", fail)
         self.assertEqual(len(self.store.all()), 1)
 
+    def test_record_viber_name_keeps_android_contact_and_business_name(self):
+        args = argparse.Namespace(command="set-viber-name", lead_id=1,
+                                  name="Viber Person", debug=False)
+        dispatch(args, self.store, client_factory=FakeClient)
+        lead = self.store.get(1)
+        self.assertEqual(lead.viber_name, "Viber Person")
+        self.assertEqual(lead.company_name, "Test Company")
+        self.assertEqual(lead.contact_name, "Test Company | SJT-1")
+        self.assertEqual(FakeClient.instances, [])
+
     def test_send_requires_exact_y(self):
         args = argparse.Namespace(command="send", lead_id=1, message="Hello", debug=False)
         with patch("builtins.input", return_value="yes"):

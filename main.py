@@ -1,4 +1,4 @@
-"""Manually triggered Windows console commands for Viber Desktop."""
+"""Manually triggered Windows console commands for Viber contacts and chats."""
 
 import argparse
 import os
@@ -75,12 +75,20 @@ def dispatch(args, store: LeadStore, client_factory=ViberClient,
         leads = store.all()
         widths = (max([2] + [len(str(x.id)) for x in leads]),
                   max([7] + [len(x.company_name) for x in leads]),
+                  max([10] + [len(x.viber_name or '(unknown)') for x in leads]),
                   max([5] + [len(x.phone) for x in leads]))
         print(f"{'ID':<{widths[0]}}  {'Company':<{widths[1]}}  "
-              f"{'Phone':<{widths[2]}}  Viber name")
+              f"{'Viber name':<{widths[2]}}  {'Phone':<{widths[3]}}  Android contact")
         for lead in leads:
             print(f"{lead.id:<{widths[0]}}  {lead.company_name:<{widths[1]}}  "
-                  f"{lead.phone:<{widths[2]}}  {lead.contact_name}")
+                  f"{(lead.viber_name or '(unknown)'):<{widths[2]}}  "
+                  f"{lead.phone:<{widths[3]}}  {lead.contact_name}")
+        return
+    if args.command == "set-viber-name":
+        lead = _lead(store, args.lead_id)
+        store.set_viber_name(lead.id, args.name)
+        print(f"Saved Viber name for lead {lead.id}: {store.get(lead.id).viber_name}")
+        print(f"Android contact remains: {lead.contact_name}")
         return
     client = client_factory(debug=args.debug)
     if args.command == "inspect":
@@ -135,6 +143,9 @@ def _parser() -> argparse.ArgumentParser:
     add.add_argument("phone")
     add.add_argument("company")
     subs.add_parser("contacts", help="List locally stored leads")
+    viber_name = subs.add_parser("set-viber-name", help="Record a verified person's Viber display name")
+    viber_name.add_argument("lead_id", type=int)
+    viber_name.add_argument("name")
     for name in ("open", "read", "chat", "send"):
         sub = subs.add_parser(name)
         sub.add_argument("lead_id", type=int)
@@ -153,13 +164,15 @@ def _menu(parser, store: LeadStore, debug: bool) -> None:
         "5": lambda: ["read", input("Lead ID: ")],
         "6": lambda: ["chat", input("Lead ID: ")],
         "7": lambda: ["inspect"],
+        "8": lambda: ["set-viber-name", input("Lead ID: "), input("Person's Viber name: ")],
     }
     while True:
         print("\nVIBER CLI\n\n1. Add contact\n2. List contacts\n"
               "3. Open conversation\n4. Send message\n5. Read conversation\n"
-              "6. Open interactive chat\n7. Inspect Viber controls\n8. Exit\n")
+              "6. Open interactive chat\n7. Inspect Viber controls\n"
+              "8. Set Viber name\n9. Exit\n")
         choice = input("Choose: ").strip()
-        if choice == "8":
+        if choice == "9":
             return
         if choice not in commands:
             print("Invalid choice.")

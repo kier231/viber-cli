@@ -43,13 +43,15 @@ running and logged in.
 `inspect` prints the entire accessible Viber subtree, including control name,
 type, and automation ID. It does not send anything. Inspect first on the Viber
 version actually installed. Search, header, composer, and message exposure vary
-by version; this project has not been tested against a live Viber instance yet.
+by version. On the tested Viber Desktop build, the recipient header is not
+exposed through UI Automation, so recipient-specific commands stop safely.
 
 ## Commands
 
 ```powershell
 .\.venv\Scripts\python.exe main.py add-contact "+381641234567" "Auto Servis Markovic"
 .\.venv\Scripts\python.exe main.py contacts
+.\.venv\Scripts\python.exe main.py set-viber-name 1 "Person's Viber name"
 .\.venv\Scripts\python.exe main.py open 1
 .\.venv\Scripts\python.exe main.py send 1 "Pozdrav, hteo sam nesto da vas pitam."
 .\.venv\Scripts\python.exe main.py read 1
@@ -67,8 +69,11 @@ Messages are pasted through the clipboard, one line at a time. `SENT` means
 Enter was dispatched to Viber; it is not a delivery receipt.
 
 The SQLite database is `leads.sqlite3` next to `main.py`. Set `VIBER_CLI_DB` to
-an alternate path. The database stores only `id`, `phone`, `company_name`,
-`contact_name`, and `created_at`. It does not contain messages.
+an alternate path. The database stores `id`, `phone`, `company_name`,
+`viber_name`, `contact_name`, and `created_at`. It does not contain messages.
+Existing databases gain the nullable `viber_name` field automatically. The
+`set-viber-name` command records a name you have verified in Viber; it does not
+rename the business or Android contact. Unknown names remain empty.
 
 ## Android contact behavior
 
@@ -110,6 +115,15 @@ contents as UIA `Edit` values but omit the conversation header entirely.
 `read-current` still prints visible messages in that case and labels the contact
 as unavailable. `open`, `read <id>`, and `send` stop when they cannot verify the
 exact recipient; there is no OCR fallback or recipient guess.
+
+Viber Desktop's dial pad is for Viber Out calls. Entering a number there does
+not establish a verified message chat. The current Desktop adapter also uses
+foreground clicks and typing for chat search and sending, and this Viber build
+does not expose a usable recipient header through UI Automation. It therefore
+cannot safely run `open` or `send` while you use the Windows mouse and keyboard.
+Do not treat the `set-viber-name` command as automatic discovery of a Viber
+profile. Phone-side Viber automation would leave the Windows desktop free, but
+it requires an unlocked phone and verified recipient controls before sending.
 
 ## Tests
 
