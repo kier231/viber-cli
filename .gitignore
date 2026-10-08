@@ -4,4 +4,6 @@ __pycache__/
 .pytest_cache/
 leads.sqlite3
 leads.sqlite3-*
+*.sqlite3.web.lock
+.web*.log
 *.db

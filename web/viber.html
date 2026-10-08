@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ViberOutreach</title>
+  <link rel="stylesheet" href="/outreach/email.css">
+  <link rel="stylesheet" href="/outreach/switch.css">
+  <script src="/outreach/switch.js" defer></script>
+  <script src="/outreach/viber.js" defer></script>
+</head>
+<body>
+  <header>
+    <div>{{switcher}}<p>Viber Desktop · background dial pad</p></div>
+    <button id="read-current" type="button">Read current chat</button>
+  </header>
+  <p id="status" role="status" aria-live="polite">Connecting to your local contact ledger…</p>
+  <p id="error" role="alert" hidden></p>
+  <p id="viber-busy" role="status" aria-live="polite" hidden></p>
+  <label for="sender">Sending account</label>
+  <select id="sender" aria-label="Sending account"><option>Current Viber Desktop account</option></select>
+  <nav aria-label="Viber workspace" class="viber-nav">
+    <button type="button" data-view="compose" aria-current="page">Compose</button>
+    <button type="button" data-view="contacts">Contacts</button>
+    <button type="button" data-view="conversation">Conversation</button>
+    <button type="button" data-view="activity">Daily activity</button>
+    <button type="button" data-view="health">Viber health</button>
+    <button type="button" data-view="events">Event log</button>
+    <button type="button" data-view="sent">Sent</button>
+    <button type="button" data-view="inbox">Inbox</button>
+    <button id="refresh" type="button">Refresh</button>
+  </nav>
+  <main>
+    <section id="compose" aria-labelledby="compose-title">
+      <h2 id="compose-title">Send a Viber message</h2>
+      <form id="compose-form">
+        <fieldset id="compose-fields">
+          <label for="to">To</label>
+          <select id="to" required><option value="">Choose a saved contact</option></select>
+          <p id="recipient-detail" class="hint"></p>
+          <label for="body">Message</label>
+          <textarea id="body" rows="9" maxlength="4000" required placeholder="Write your message…"></textarea>
+          <p class="hint">One line of text. Serbian letters are supported; emoji and line breaks are not.</p>
+          <div class="actions"><button id="send" type="submit">Review message</button><button id="new-message" type="button">New message</button><button id="compose-open" type="button">Open chat</button></div>
+        </fieldset>
+      </form>
+      <div id="confirmation" class="confirmation" hidden>
+        <h3>Review before sending</h3>
+        <dl id="confirm-recipient" class="contact-detail-grid"></dl>
+        <pre id="confirm-body"></pre>
+        <label><input id="confirm-check" type="checkbox">I checked this recipient and message.</label>
+        <p class="hint">The recipient is checked again before sending. This review expires after two minutes.</p>
+        <div class="actions"><button id="confirm-send" class="primary" type="button" disabled>Send message</button><button id="confirm-cancel" type="button">Cancel review</button></div>
+      </div>
+      <p id="send-result" role="status" aria-live="polite"></p>
+      <button id="recover-send" type="button" hidden>Check saved send attempt</button>
+    </section>
+    <section id="contacts" aria-labelledby="contacts-title" hidden>
+      <h2 id="contacts-title">Viber contacts</h2>
+      <p class="hint">Your existing CLI contact ledger. Business names and Android contact names stay as they are. The person's Viber name is stored separately.</p>
+      <details id="add-panel" class="campaign-card">
+        <summary>Add an Android contact</summary>
+        <form id="contact-form">
+          <label for="contact-phone">Phone number</label><input id="contact-phone" type="tel" placeholder="+381…" required>
+          <label for="contact-company">Business name</label><input id="contact-company" maxlength="120" required>
+          <p class="hint">Connect your authorized Android phone to add and verify the contact.</p>
+          <button id="add-contact" type="submit">Add contact</button>
+        </form>
+      </details>
+      <label for="contact-search">Search contacts</label><input id="contact-search" class="contact-search" type="search" placeholder="Business, Viber name, number, or ID">
+      <p id="contact-status" role="status" aria-live="polite"></p>
+      <div id="contact-list"></div>
+      <div class="viber-pagination"><button id="contact-prev" type="button">Previous</button><span id="contact-page"></span><button id="contact-next" type="button">Next</button></div>
+    </section>
+    <section id="conversation" aria-labelledby="conversation-title" hidden>
+      <h2 id="conversation-title">Conversation</h2>
+      <form id="read-form" class="inline-form"><label for="read-contact">Contact</label><div><select id="read-contact" required></select><button type="submit">Read visible messages</button></div></form>
+      <p class="hint">Reads the visible conversation viewport. It does not fetch older history. Message direction is shown only when Viber exposes it.</p>
+      <p id="conversation-meta"></p><div id="conversation-messages"><p class="viber-empty">Choose a contact to read its conversation.</p></div>
+      <button id="conversation-reply" type="button" hidden>Write a message to this contact</button>
+    </section>
+    <section id="activity" aria-labelledby="activity-title" hidden>
+      <h2 id="activity-title">Daily Viber activity</h2>
+      <form id="activity-form" class="activity-filters"><div><label for="activity-days">Period</label><select id="activity-days"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></div><button type="submit">Show activity</button></form>
+      <div class="activity-summary"><div><span>Send actions dispatched</span><strong id="activity-dispatched">0</strong></div><div><span>Blocked before sending</span><strong id="activity-blocked">0</strong></div><div><span>Unknown outcomes</span><strong id="activity-unknown">0</strong></div><div><span>Saved contacts</span><strong id="activity-contacts">0</strong></div></div>
+      <p class="hint">This app's Viber attempts, grouped by your computer's local date. Dispatched does not mean delivered.</p>
+      <div class="activity-table-wrap"><table id="activity-table"><thead><tr><th>Date</th><th>Dispatched</th><th>Blocked</th><th>Unknown</th></tr></thead><tbody id="activity-rows"></tbody></table></div>
+    </section>
+    <section id="health" aria-labelledby="health-title" hidden>
+      <h2 id="health-title">Viber health and diagnostics</h2>
+      <p class="hint">Keep Viber logged in and restored behind another window. Your Windows session must remain unlocked. Adding contacts also needs an authorized Android phone.</p>
+      <div class="actions"><button id="check-health" type="button">Check setup</button><button id="inspect" type="button">Inspect Viber controls</button></div>
+      <div id="health-checks"></div><pre id="inspect-tree" hidden></pre>
+    </section>
+    <section id="events" aria-labelledby="events-title" hidden><h2 id="events-title">Viber event log</h2><div id="event-list"></div><button id="event-more" type="button" hidden>Load more events</button></section>
+    <section id="sent" aria-labelledby="sent-title" hidden><h2 id="sent-title">Viber send history</h2><p class="hint">Attempts made by this localhost app. For an unknown outcome, check Viber before trying again.</p><div id="sent-list"></div><button id="sent-more" type="button" hidden>Load more attempts</button></section>
+    <section id="inbox" aria-labelledby="inbox-title" hidden><h2 id="inbox-title">Saved conversation snapshots</h2><p class="hint">The latest visible messages you read for each contact. Use Conversation to refresh a snapshot. Viber does not expose a complete inbox or reliable reply classification.</p><div id="inbox-list"></div><button id="inbox-more" type="button" hidden>Load more snapshots</button></section>
+  </main>
+  <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Sending requires a verified recipient and your confirmation. Email campaigns and scheduling remain in EmailOutreach.</footer>
+</body>
+</html>

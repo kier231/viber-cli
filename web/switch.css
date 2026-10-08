@@ -1,0 +1,28 @@
+.workspace-picker { position: relative; }
+#workspace-switch { padding: 0; border: 0; background: transparent; font: inherit; font-weight: inherit; text-align: left; color: inherit; }
+#workspace-switch span { font-size: 16px; color: #64717e; margin-left: 5px; }
+#workspace-switch:hover { color: #245ec5; }
+#workspace-menu { position: absolute; top: 36px; left: 0; z-index: 20; min-width: 230px; border: 1px solid #bdc6cf; border-radius: 5px; padding: 6px; background: white; box-shadow: 0 8px 24px #1d29371a; }
+#workspace-menu a { display: block; padding: 11px 12px; border-radius: 4px; color: #1d2937; text-decoration: none; font-weight: 600; }
+#workspace-menu a:hover, #workspace-menu a:focus-visible { background: #edf1f5; }
+#workspace-menu a[aria-current="page"] { color: #245ec5; background: #f2f6fc; }
+.viber-nav [aria-current="page"], .primary { color: white; background: #245ec5; border-color: #245ec5; }
+.primary:hover { background: #1d4fa8; }
+.confirmation { margin-top: 22px; border: 1px solid #9bb8e6; background: #f6f9ff; border-radius: 5px; padding: 18px; }
+.confirmation pre { margin: 14px 0; }
+.confirmation label { display: flex; align-items: flex-start; gap: 9px; font-weight: 500; }
+.confirmation input { width: auto; margin-top: 5px; }
+.viber-notice { color: #506172; font-size: 13px; line-height: 1.6; }
+.viber-state { font-size: 12px; font-weight: 600; padding: 3px 7px; border-radius: 4px; background: #edf1f5; }
+.viber-record { border-bottom: 1px solid #e2e6eb; padding: 15px 5px; }
+.viber-record p { margin: 6px 0; }
+.viber-record pre { margin: 6px 0; padding: 12px 0; }
+.viber-record summary { cursor: pointer; overflow-wrap: anywhere; }
+.success { color: #2f7a45; }
+.warning { color: #8c2920; }
+.contact-search { margin: 18px 0; }
+#viber-busy { color: #245ec5; }
+.viber-empty { padding: 20px 0; color: #64717e; }
+.viber-pagination { display: flex; gap: 12px; align-items: center; margin-top: 18px; }
+#inspect-tree { max-height: 500px; overflow: auto; font-family: ui-monospace, monospace; font-size: 12px; }
+@media (max-width: 600px) { .contact-actions, .actions { flex-wrap: wrap; } .workspace-picker h1 { font-size: 21px; } #read-current { max-width: 100px; font-size: 13px; } }

@@ -3,8 +3,61 @@
 A manual Windows console tool for keeping an Android contact ledger and opening,
 sending to, or reading Viber Desktop chats. The default chat path enters a phone
 number on Viber's dial pad and presses its message button without moving the
-Windows mouse or taking keyboard focus. There are no workers, schedules, AI
-features, automatic replies, or message queues.
+Windows mouse or taking keyboard focus. It also includes a localhost web app
+that preserves the existing EmailOutreach UI and adds a ViberOutreach workspace.
+Viber actions are manually triggered and run one at a time; there are no Viber
+campaigns, schedules, automatic replies, or unattended sends.
+
+## Localhost app
+
+```powershell
+cd C:\viber-cli
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe web.py
+```
+
+Open **http://127.0.0.1:4001/**. Click the **EmailOutreach** title to open the
+dropdown and select **ViberOutreach**. The title in either workspace switches
+back to the other. `start-web.ps1` is an alternative launcher; use
+`-Port 4002` to select another free port.
+
+The email workspace forwards to your existing EmailOutreach service on port
+4000. Keep that Docker service running. Its original UI, mailboxes, contacts,
+CSV imports, campaigns, scheduling, activity, health, deliverability, inbox
+placement, events, sent mail, replies, and inbox remain available. Its styling
+and JavaScript are served by the original service; the only page change is the
+title dropdown. Email browser sessions use a separate cookie so the app on
+port 4000 remains usable. No SMTP/IMAP credentials are copied into this repo.
+Use `--email-port` if the existing service uses another loopback port.
+
+ViberOutreach provides compose with recipient review, contact search and
+pagination, verified Android contact creation, separate Viber name editing,
+background open/read/send, current-chat reading, saved visible conversation
+snapshots, send history, daily activity, an event log, and setup/control
+diagnostics. It shares `leads.sqlite3` with the CLI and uses the same business
+and Android contact names. Sending opens the phone through the dial pad,
+reads the Viber name, shows the exact recipient and text, then requires a
+checkbox and **Send message**. It verifies the recipient again at dispatch.
+
+Viber's visible messages are not a full inbox, and accessibility does not
+always reveal direction or delivery receipts. The UI labels these as snapshots
+and send actions. Email scheduling and campaigns stay in EmailOutreach.
+No message is sent just by opening the app, switching workspaces, reviewing a
+message, reading chats, or checking health.
+
+The server binds only to `127.0.0.1` and checks the Host, Origin, and browser
+tokens. Viber desktop actions run on one COM worker so web requests remain
+responsive. Reviewed messages expire after two minutes. Submission keys are
+saved before dispatch to prevent duplicate attempts after a lost response.
+An interrupted/uncertain attempt is recorded as unknown and is never retried
+automatically; check Viber manually. A second server cannot use the same
+database while the first is running. Stop the app with Ctrl+C; it finishes any
+active operation before exiting.
+
+The extra SQLite tables are `web_operations`, `web_sends`, `web_reads`, and
+`web_events`. They contain local message text and snapshots and are ignored by
+Git with the contact database. The old CLI commands continue to work; avoid
+running a separate CLI desktop action during a web desktop action.
 
 ## Requirements
 
