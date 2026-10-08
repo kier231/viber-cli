@@ -182,6 +182,15 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(self.service.campaigns.detail(active['id'])['state'], 'PAUSED')
         self.assertEqual(FakeDesktop.sent, [])
 
+    def test_resume_waits_for_claimed_action_to_settle(self):
+        active, _ = self.activate()
+        with closing(self.service.store._connect()) as db, db:
+            db.execute("UPDATE web_sends SET state='QUEUED' WHERE id=?", (active['recipients'][0]['id'],))
+        self.service.campaigns.control(active['id'], 'pause')
+        with self.assertRaisesRegex(ValueError, 'active desktop action'):
+            self.service.campaigns.review(active['id'])
+        self.assertEqual(self.service.records('scheduled')[0]['campaign_state'], 'PAUSED')
+
     def test_complete_and_cancel_after_claim_before_send(self):
         draft = self.service.campaigns.create(self.payload(lead_ids=[self.leads[0].id]))
         active, _ = self.activate(draft)

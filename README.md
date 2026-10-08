@@ -5,8 +5,7 @@ sending to, or reading Viber Desktop chats. The default chat path enters a phone
 number on Viber's dial pad and presses its message button without moving the
 Windows mouse or taking keyboard focus. It also includes a localhost web app
 that preserves the existing EmailOutreach UI and adds a ViberOutreach workspace.
-Manual and scheduled Viber actions run one at a time. There are no Viber
-campaigns or automatic replies.
+Manual, scheduled, and campaign Viber actions run one at a time.
 
 ## Localhost app
 
@@ -32,7 +31,8 @@ Use `--email-port` if the existing service uses another loopback port.
 
 ViberOutreach provides compose with recipient review, contact search and
 pagination, verified Android contact creation, separate Viber name editing,
-background open/read/send, scheduled messages with cancellation, current-chat
+background open/read/send, scheduled messages with cancellation, campaigns of
+up to 100 unique recipients, current-chat
 reading, saved visible conversation snapshots, send history, daily activity, an event log, and setup/control
 diagnostics. It shares `leads.sqlite3` with the CLI and uses the same business
 and Android contact names. Sending opens the phone through the dial pad,
@@ -64,6 +64,46 @@ recipient/setup check becomes **BLOCKED**; an uncertain attempt becomes
 **UNKNOWN**. Neither is retried automatically. Review Viber and create a new
 schedule if needed. Cancellation fails once the send operation has started.
 
+### Viber campaigns
+
+In **ViberOutreach → Campaigns**, open **Create a campaign**. Enter a name,
+select contacts individually or use **Select first 100**, and write the message
+template. Choose the start time, minutes between messages, maximum messages
+per day, and daily sending window. All times use **Europe/Warsaw**. Messages
+outside the window or above the daily cap continue on the next day. A campaign
+must finish within 365 days. Each campaign accepts 1–100 contacts and sends
+once per unique phone number, even when the ledger has duplicate rows.
+
+Supported template variables are `{{company}}`, `{{phone}}`, `{{name}}`
+(saved Viber name, otherwise business name), and `{{viber_name}}` (requires a
+saved Viber name). Expanded text is fixed in the draft and shown individually
+for every recipient. Messages use the same single-line plain text rules as
+Compose. **Create draft** saves the batch without sending anything. Review
+every recipient, expanded message, and planned time, check the authorization
+box, then press **Schedule N messages**. Campaign reviews expire after ten
+minutes or when the first planned send time passes.
+
+The scheduler opens each phone through the desktop dial pad and verifies its
+Viber name immediately before dispatch. Previously unknown Viber names are
+discovered and saved separately; business and Android contact names stay as
+they are. A known name mismatch or changed recipient blocks the attempt.
+Sending intervals and daily caps are enforced against actual attempts, so a
+busy worker cannot cause a burst of overdue messages. Remaining planned times
+adjust after each attempt to preserve that spacing and the daily window.
+
+Use **Pause campaign**, **Review and resume**, or **Cancel campaign** to manage
+the batch. Pause and cancel stop remaining messages; an action already sending
+may finish. A blocked, missed (over 15 minutes overdue), or uncertain attempt
+automatically pauses the campaign. Inspect Viber before reviewing and resuming
+the remaining recipients. Failed or uncertain messages are never retried by
+Resume. Interrupted attempts become unknown on restart and pause the batch.
+The campaign list shows recipient counts, status, planned times, and individual
+outcomes. Dispatched counts mean send actions, not delivery receipts.
+
+Drafts and active campaigns survive restarts. Keep the local server running,
+the PC awake, Windows unlocked, and Viber restored behind another window;
+the browser can be closed. Email campaigns remain in EmailOutreach.
+
 Viber's visible messages are not a full inbox, and accessibility does not
 always reveal direction or delivery receipts. The UI labels these as snapshots
 and send actions. Email scheduling and campaigns stay in EmailOutreach.
@@ -81,7 +121,7 @@ database while the first is running. Stop the app with Ctrl+C; it finishes any
 active operation before exiting.
 
 The extra SQLite tables are `web_operations`, `web_sends`, `web_reads`, and
-`web_events`. `web_sends` also stores the scheduled UTC time and the reviewed
+`web_events`, `web_campaigns`, and `web_campaign_requests`. `web_sends` also stores the scheduled UTC time, campaign and attempt information, and the reviewed
 recipient snapshot. These tables contain local message text and snapshots and are ignored by
 Git with the contact database. The old CLI commands continue to work; avoid
 running a separate CLI desktop action during a web desktop action.

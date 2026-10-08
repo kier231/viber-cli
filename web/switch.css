@@ -25,4 +25,19 @@
 .viber-empty { padding: 20px 0; color: #64717e; }
 .viber-pagination { display: flex; gap: 12px; align-items: center; margin-top: 18px; }
 #inspect-tree { max-height: 500px; overflow: auto; font-family: ui-monospace, monospace; font-size: 12px; }
+.campaign-selection-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.campaign-selection-tools label { margin: 0; }
+.campaign-selection-tools input { width: 85px; }
+.campaign-contact-list { max-height: 230px; overflow: auto; border: 1px solid #d4dbe2; border-radius: 5px; padding: 6px 12px; }
+.campaign-contact-list label { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 0; font-weight: 500; border-bottom: 1px solid #edf1f5; }
+.campaign-contact-list label:last-child { border: 0; }
+.campaign-contact-list input { width: auto; margin-top: 4px; }
+.campaign-contact-list small { display: block; color: #586675; margin-top: 3px; }
+.campaign-window { display: flex; align-items: center; gap: 10px; }
+.campaign-window input { min-width: 0; }
+.campaign-recipient-review { max-height: 430px; overflow: auto; padding: 0 12px; background: white; border: 1px solid #d4dbe2; border-radius: 4px; }
+.campaign-list-heading { margin-top: 28px; }
+.campaign-card .warning { color: #8c2920; }
+.campaign-card .actions { flex-wrap: wrap; }
+.campaign-card summary { cursor: pointer; }
 @media (max-width: 600px) { .contact-actions, .actions { flex-wrap: wrap; } #read-current { max-width: 90px; font-size: 13px; } }

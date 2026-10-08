@@ -223,6 +223,8 @@ class CampaignManager:
             campaign = self._get(db, campaign_id)
             if campaign["state"] not in {"DRAFT", "PAUSED"}:
                 raise ValueError("Only a draft or paused campaign can be reviewed for activation.")
+            if db.execute("SELECT 1 FROM web_sends WHERE campaign_id=? AND state IN ('QUEUED','SUBMITTING') LIMIT 1", (campaign_id,)).fetchone():
+                raise ValueError("Wait for the active desktop action to finish before reviewing the remaining campaign.")
             rows = db.execute("SELECT * FROM web_sends WHERE campaign_id=? AND state IN ('DRAFT','SCHEDULED') ORDER BY scheduled_at,rowid", (campaign_id,)).fetchall()
             if not rows:
                 raise ValueError("This campaign has no unsent recipients left. Failed or uncertain messages are not retried.")

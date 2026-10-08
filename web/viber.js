@@ -11,15 +11,21 @@
   const showError = error => { $('error').textContent = error.message || 'The local request failed.'; $('error').hidden = false; };
   const clearError = () => { $('error').hidden = true; };
   const action = work => async event => { event?.preventDefault(); clearError(); try { await work(event); } catch (error) { showError(error); } };
-  const views = ['compose', 'scheduled', 'contacts', 'conversation', 'activity', 'health', 'events', 'sent', 'inbox'];
+  const views = ['compose', 'scheduled', 'campaigns', 'contacts', 'conversation', 'activity', 'health', 'events', 'sent', 'inbox'];
   const pendingKey = 'viberoutreach-pending-send';
   const draftKey = 'viberoutreach-draft';
+  const campaignPendingKey = 'viberoutreach-pending-campaign';
+  const campaignSelection = new Set();
+  let campaignPreview = null, campaignPending = null, campaignWorking = false, campaignsLoading = false;
+  let campaignsSignature = null;
   let csrf, contacts = [], view = 'compose', busy = false, preview = null, conversationLead = null, contactPage = 0;
   let offsets = { events: 0, sent: 0, inbox: 0, scheduled: 0 };
   let schedulesLoading = false;
   let pending = null;
   try { pending = JSON.parse(localStorage.getItem(pendingKey) || 'null'); }
   catch { showError(new Error('The saved send attempt cannot be read. Check Sent before sending another message.')); }
+  try { campaignPending = JSON.parse(localStorage.getItem(campaignPendingKey) || 'null'); }
+  catch { showError(new Error('The saved campaign submission cannot be read. Check Your campaigns before creating another.')); }
 
   async function api(path, payload) {
     const response = await fetch('/viber/api/' + path, { method: payload === undefined ? 'GET' : 'POST', credentials: 'same-origin', redirect: 'error',
@@ -40,6 +46,7 @@
     }
     updateCompose();
     updateContactPagination();
+    updateCampaignControls();
   }
 
   async function operation(path, payload, message) {
@@ -114,7 +121,7 @@
       select.value = value;
     }
     $('status').textContent = `${contacts.length} saved contact${contacts.length === 1 ? '' : 's'} · Viber Desktop · background mode`;
-    recipientDetail(); renderContacts();
+    recipientDetail(); renderContacts(); renderCampaignContacts();
   }
 
   function selectLead(leadId) {
@@ -199,9 +206,11 @@
       record.dataset.id = item.id || item.lead_id;
       record.open = expanded.has(record.dataset.id);
       if (kind === 'scheduled') {
-        record.append(node('summary', `${item.company_name} · ${item.viber_name} · ${item.state}`), node('p', `Send time: ${date(item.scheduled_at)} · Europe/Warsaw`, 'hint'), node('p', item.phone, 'hint'), node('pre', item.text));
+        record.append(node('summary', `${item.company_name} · ${item.viber_name || 'name verified at dispatch'} · ${item.state}`), node('p', `Send time: ${date(item.scheduled_at)} · Europe/Warsaw`, 'hint'), node('p', item.phone, 'hint'), node('pre', item.text));
+        if (item.campaign_name) record.append(node('p', `Campaign: ${item.campaign_name} · ${item.campaign_state}`, 'hint'));
         if (item.state === 'SCHEDULED') {
-          const countdown = node('p', '', 'send-countdown'); countdown.dataset.due = item.scheduled_at; record.append(countdown);
+          if (item.campaign_state === 'PAUSED') record.append(node('p', 'Campaign paused. Review and resume it from Campaigns to continue.', 'hint'));
+          else { const countdown = node('p', '', 'send-countdown'); countdown.dataset.due = item.scheduled_at; record.append(countdown); }
           record.append(contactButton('Cancel schedule', async () => {
             await api('cancel-scheduled', {send_id: item.id});
             $('schedule-status').textContent = 'Schedule cancelled. No message will be sent by this schedule.';
@@ -249,6 +258,7 @@
     document.querySelectorAll('[data-view]').forEach(button => { if (button.dataset.view === next) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); });
     history.replaceState(null, '', '/viber#' + next);
     if (next === 'contacts') renderContacts();
+    if (next === 'campaigns') { renderCampaignContacts(); await loadCampaigns(); }
     if (next === 'activity') await loadActivity();
     if (['events', 'sent', 'inbox', 'scheduled'].includes(next)) await loadRecords(next);
   }
@@ -290,6 +300,168 @@
       throw error;
     } finally { setBusy(false); }
   }
+
+  function uniqueCampaignContacts() {
+    const seen = new Set();
+    return contacts.filter(lead => { if (seen.has(lead.phone)) return false; seen.add(lead.phone); return true; });
+  }
+
+  function matchingCampaignContacts() {
+    const search = $('campaign-search').value.trim().toLocaleLowerCase();
+    return uniqueCampaignContacts().filter(lead => [lead.company_name, lead.phone, lead.viber_name || '', lead.id].join(' ').toLocaleLowerCase().includes(search));
+  }
+
+  function updateCampaignControls() {
+    const locked = busy || campaignWorking || !!campaignPending;
+    $('campaign-fields').disabled = locked;
+    $('campaign-recover').hidden = !campaignPending;
+    $('campaign-recover').disabled = busy || campaignWorking;
+    $('campaign-review').hidden = !campaignPreview;
+    const expired = campaignPreview && (campaignPreview.expires_at * 1000 <= Date.now() || new Date(campaignPreview.recipients[0].scheduled_at).getTime() <= Date.now());
+    $('campaign-confirm-check').disabled = locked || !!expired;
+    $('campaign-close-review').disabled = locked;
+    $('campaign-activate').disabled = locked || !campaignPreview || !!expired || !$('campaign-confirm-check').checked;
+    $('campaign-activate').textContent = campaignPreview ? `Schedule ${campaignPreview.recipients.length} messages` : 'Schedule campaign';
+    $('campaign-review-expiry').textContent = expired ? 'This review expired or its first send time passed. Close it and review the campaign again.' : 'This review expires after ten minutes, or when the first send time passes.';
+    const available = uniqueCampaignContacts().length;
+    $('campaign-selection-count').textContent = `${campaignSelection.size} selected · ${available} unique phone numbers available · maximum 100. Duplicate phone numbers receive one message.`;
+    $('campaign-select').textContent = `Select first ${$('campaign-batch-size').value || 100}`;
+    $('campaign-create').disabled = locked || campaignSelection.size === 0;
+    for (const button of $('campaign-list').querySelectorAll('button')) button.disabled = locked;
+  }
+
+  function renderCampaignContacts() {
+    const valid = new Set(uniqueCampaignContacts().map(lead => lead.id));
+    for (const id of campaignSelection) if (!valid.has(id)) campaignSelection.delete(id);
+    const list = $('campaign-contact-list'); list.replaceChildren();
+    const matches = matchingCampaignContacts();
+    if (!matches.length) list.append(node('p', 'No matching contacts. Add numbers in Contacts first.', 'viber-empty'));
+    for (const lead of matches) {
+      const label = node('label'), check = node('input'), text = node('span', lead.company_name + (lead.viber_name ? ' · ' + lead.viber_name : ''));
+      check.type = 'checkbox'; check.checked = campaignSelection.has(lead.id);
+      check.disabled = busy || campaignWorking || !!campaignPending;
+      text.append(node('small', `${lead.phone} · #${lead.id}`)); label.append(check, text); list.append(label);
+      check.addEventListener('change', () => {
+        if (check.checked && campaignSelection.size >= 100) { check.checked = false; showError(new Error('Select at most 100 unique numbers per campaign.')); return; }
+        if (check.checked) campaignSelection.add(lead.id); else campaignSelection.delete(lead.id);
+        updateCampaignControls();
+      });
+    }
+    updateCampaignControls();
+  }
+
+  function campaignRecipientRow(item, index, reviewing = false) {
+    const lead = reviewing ? item.lead : item;
+    const row = node('details', null, 'viber-record');
+    row.append(node('summary', `${index + 1}. ${lead.company_name} · ${lead.phone}${reviewing ? '' : ' · ' + item.state}`),
+      node('p', `Viber name: ${item.viber_name || 'verify and discover at send time'} · ${date(item.scheduled_at)} · Europe/Warsaw`, 'hint'), node('pre', item.text));
+    if (item.error) row.append(node('p', item.error, 'warning'));
+    return row;
+  }
+
+  async function reviewCampaign(id) {
+    if (campaignPending) throw new Error('Check the saved campaign submission first.');
+    campaignPreview = await api('campaign-review', {campaign_id: id});
+    $('campaign-review-title').textContent = 'Review: ' + campaignPreview.name;
+    const items = campaignPreview.recipients, rules = campaignPreview.rules;
+    $('campaign-review-meta').textContent = `${items.length} remaining recipients · ${rules.interval_minutes} minutes apart · up to ${rules.daily_cap}/day · ${rules.window_start}–${rules.window_end} Europe/Warsaw. First: ${date(items[0].scheduled_at)}. Last: ${date(items.at(-1).scheduled_at)}.`;
+    $('campaign-review-recipients').replaceChildren(...items.map((item, index) => campaignRecipientRow(item, index, true)));
+    $('campaign-confirm-check').checked = false; updateCampaignControls();
+    $('campaign-review').scrollIntoView({block: 'start', behavior: 'smooth'});
+  }
+
+  async function loadCampaigns() {
+    if (campaignsLoading) return;
+    campaignsLoading = true;
+    try {
+      const campaigns = await api('campaigns'), list = $('campaign-list');
+      const signature = JSON.stringify(campaigns);
+      if (signature === campaignsSignature) { updateCampaignControls(); return; }
+      const expanded = new Set(Array.from(list.querySelectorAll('details[open]')).map(item => item.dataset.id));
+      const cards = [];
+      for (const item of campaigns) {
+        const card = node('article', null, 'campaign-card');
+        card.append(node('h3', item.name), node('span', item.state, 'viber-state'),
+          node('p', `${item.total} recipients · ${Object.entries(item.counts).map(([state, count]) => `${count} ${state.toLowerCase()}`).join(' · ')}`),
+          node('p', `${item.rules.interval_minutes} minutes apart · up to ${item.rules.daily_cap}/day · ${item.rules.window_start}–${item.rules.window_end} Europe/Warsaw`, 'hint'));
+        if (item.next_at) card.append(node('p', `Next planned: ${date(item.next_at)} · Last planned: ${date(item.last_at)}`, 'hint'));
+        if (item.reason) card.append(node('p', item.reason, 'warning'));
+        if (item.duplicates_skipped) card.append(node('p', `${item.duplicates_skipped} duplicate phone selection(s) skipped.`, 'hint'));
+        const actions = node('div', null, 'actions');
+        if (['DRAFT', 'PAUSED'].includes(item.state) && ((item.counts.DRAFT || 0) + (item.counts.SCHEDULED || 0))) actions.append(contactButton(item.state === 'DRAFT' ? 'Review and schedule' : 'Review and resume', () => reviewCampaign(item.id)));
+        if (item.state === 'ACTIVE') actions.append(contactButton('Pause campaign', async () => {
+          await api('campaign-pause', {campaign_id: item.id}); $('campaign-status').textContent = 'Campaign paused. An action already sending may finish.'; await loadCampaigns();
+        }));
+        if (['DRAFT', 'PAUSED', 'ACTIVE'].includes(item.state)) actions.append(contactButton('Cancel campaign', async () => {
+          await api('campaign-cancel', {campaign_id: item.id});
+          if (campaignPreview?.campaign_id === item.id) campaignPreview = null;
+          $('campaign-status').textContent = 'Campaign cancelled. Remaining messages will not start; an action already sending may finish.'; updateCampaignControls(); await loadCampaigns();
+        }));
+        card.append(actions);
+        const details = node('details'), body = node('div'); details.dataset.id = item.id;
+        details.append(node('summary', 'Recipients and outcomes'), body); card.append(details);
+        const fillDetails = async () => {
+          const detail = await api('campaigns/' + encodeURIComponent(item.id));
+          body.replaceChildren(...detail.recipients.map((recipient, index) => campaignRecipientRow(recipient, index)));
+        };
+        if (expanded.has(item.id)) { details.open = true; await fillDetails(); }
+        details.addEventListener('toggle', () => { if (details.open && !body.childElementCount) fillDetails().catch(showError); });
+        cards.push(card);
+      }
+      list.replaceChildren(...(cards.length ? cards : [node('p', 'No campaigns yet. Create a draft above to get started.', 'viber-empty')]));
+      campaignsSignature = signature;
+      updateCampaignControls();
+    } finally { campaignsLoading = false; }
+  }
+
+  async function recoverCampaignSubmission() {
+    if (!campaignPending || campaignWorking) return;
+    campaignWorking = true; updateCampaignControls();
+    let result, kind;
+    try {
+      kind = campaignPending.kind;
+      result = await api(kind === 'create' ? 'campaigns' : 'campaign-activate', campaignPending.payload);
+      campaignPending = null; localStorage.removeItem(campaignPendingKey);
+    } catch (error) {
+      if (error.status === 400) { campaignPending = null; localStorage.removeItem(campaignPendingKey); }
+      throw error;
+    } finally { campaignWorking = false; updateCampaignControls(); }
+    if (kind === 'create') {
+      $('campaign-status').textContent = `Draft saved: ${result.total} unique recipients. Review and confirm to activate it.`;
+      $('campaign-create-panel').open = false; await loadCampaigns(); await reviewCampaign(result.id);
+    } else {
+      campaignPreview = null; $('campaign-confirm-check').checked = false; updateCampaignControls();
+      $('campaign-status').textContent = `${result.name}: ${result.state}. ${result.counts.SCHEDULED || 0} messages waiting. Next planned: ${date(result.next_at)}. Keep the local server running.`;
+      await loadCampaigns();
+    }
+  }
+
+  $('campaign-start').value = localDateTime(new Date(Date.now() + 3600000));
+  $('campaign-search').addEventListener('input', renderCampaignContacts);
+  $('campaign-batch-size').addEventListener('input', updateCampaignControls);
+  $('campaign-select').addEventListener('click', action(async () => {
+    const count = Number($('campaign-batch-size').value);
+    if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('Choose a batch size between 1 and 100.');
+    campaignSelection.clear(); for (const lead of matchingCampaignContacts().slice(0, count)) campaignSelection.add(lead.id);
+    renderCampaignContacts();
+  }));
+  $('campaign-clear').addEventListener('click', () => { campaignSelection.clear(); renderCampaignContacts(); });
+  $('campaign-form').addEventListener('submit', action(async () => {
+    if (campaignPending) throw new Error('Check the saved campaign submission first.');
+    if (!campaignSelection.size) throw new Error('Choose at least one recipient.');
+    campaignPending = {kind: 'create', payload: {request_key: crypto.randomUUID(), name: $('campaign-name').value, text: $('campaign-text').value,
+      lead_ids: [...campaignSelection], schedule: {mode: 'datetime', local_time: $('campaign-start').value, time_zone: timeZone},
+      interval_minutes: Number($('campaign-interval').value), daily_cap: Number($('campaign-cap').value), window_start: $('campaign-window-start').value, window_end: $('campaign-window-end').value}};
+    localStorage.setItem(campaignPendingKey, JSON.stringify(campaignPending)); await recoverCampaignSubmission();
+  }));
+  $('campaign-confirm-check').addEventListener('change', updateCampaignControls);
+  $('campaign-close-review').addEventListener('click', () => { campaignPreview = null; updateCampaignControls(); });
+  $('campaign-activate').addEventListener('click', action(async () => {
+    if (!campaignPreview || !$('campaign-confirm-check').checked || $('campaign-activate').disabled) throw new Error('Review and confirm this campaign first.');
+    campaignPending = {kind: 'activate', payload: {preview_token: campaignPreview.token, confirmed: true, request_key: crypto.randomUUID()}};
+    localStorage.setItem(campaignPendingKey, JSON.stringify(campaignPending)); await recoverCampaignSubmission();
+  }));
+  $('campaign-recover').addEventListener('click', action(recoverCampaignSubmission));
 
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', action(() => navigate(button.dataset.view))));
   $('to').addEventListener('change', () => { preview = null; recipientDetail(); saveDraft(); updateCompose(); });
@@ -340,11 +512,13 @@
   $('refresh').addEventListener('click', action(async () => { await loadContacts(); if (view === 'health') await checkHealth(); else await navigate(view); }));
   window.addEventListener('storage', event => {
     if (event.key === pendingKey) { try { pending = JSON.parse(event.newValue || 'null'); updateCompose(); } catch (error) { showError(error); } }
+    if (event.key === campaignPendingKey) { try { campaignPending = JSON.parse(event.newValue || 'null'); updateCampaignControls(); } catch (error) { showError(error); } }
   });
-  setInterval(() => { if (preview) updateCompose(); }, 1000);
+  setInterval(() => { if (preview) updateCompose(); if (campaignPreview) updateCampaignControls(); }, 1000);
   setInterval(() => {
     updateCountdowns();
     if (csrf && !document.hidden && view === 'scheduled' && !busy && offsets.scheduled <= 100) loadRecords('scheduled').catch(showError);
+    if (csrf && !document.hidden && view === 'campaigns' && !busy && !campaignWorking && !campaignPending) loadCampaigns().catch(showError);
   }, 5000);
   action(async () => {
     const session = await api('session', {}); csrf = session.csrf; await loadContacts();
@@ -356,5 +530,6 @@
     updateCompose();
     const requested = location.hash.slice(1); await navigate(views.includes(requested) ? requested : 'compose');
     if (pending) $('send-result').textContent = 'A send attempt is saved. Check its status before composing another message.';
+    if (campaignPending) $('campaign-status').textContent = 'A campaign submission is saved. Check its status before creating or activating another.';
   })();
 })();

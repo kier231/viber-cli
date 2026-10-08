@@ -475,12 +475,16 @@ class WebService:
         with closing(self.store._connect()) as db:
             rows = db.execute(f"SELECT * FROM {table} {where} ORDER BY {order_by} LIMIT ? OFFSET ?",
                               (limit, offset)).fetchall()
+            campaigns = {row["id"]: dict(row) for row in db.execute("SELECT id,name,state FROM web_campaigns")} if kind in {"sent", "scheduled"} else {}
         result = [dict(row) for row in rows]
         for row in result:
             # Never return internal confirmation hashes or submission keys in lists.
             row.pop("preview_hash", None)
             row.pop("request_key", None)
             row.pop("lead_snapshot", None)
+            campaign = campaigns.get(row.get("campaign_id"))
+            if campaign:
+                row.update(campaign_name=campaign["name"], campaign_state=campaign["state"])
             if kind == "inbox":
                 row["messages"] = json.loads(row["messages"])
                 lead = self.store.get(row["lead_id"])

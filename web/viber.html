@@ -22,6 +22,7 @@
   <nav aria-label="Viber workspace" class="viber-nav">
     <button type="button" data-view="compose" aria-current="page">Compose</button>
     <button type="button" data-view="scheduled">Scheduled</button>
+    <button type="button" data-view="campaigns">Campaigns</button>
     <button type="button" data-view="contacts">Contacts</button>
     <button type="button" data-view="conversation">Conversation</button>
     <button type="button" data-view="activity">Daily activity</button>
@@ -69,6 +70,46 @@
       <p id="schedule-status" role="status" aria-live="polite"></p>
       <div id="scheduled-list"></div><button id="scheduled-more" type="button" hidden>Load more schedules</button>
     </section>
+    <section id="campaigns" aria-labelledby="campaigns-title" hidden>
+      <h2 id="campaigns-title">Viber campaigns</h2>
+      <p class="hint">Schedule up to 100 unique phone numbers per campaign. Choose the start time, spacing, and daily limit, then review the batch before activating it.</p>
+      <details id="campaign-create-panel" open>
+        <summary>Create a campaign</summary>
+        <form id="campaign-form">
+          <fieldset id="campaign-fields">
+            <label for="campaign-name">Campaign name</label><input id="campaign-name" maxlength="120" required placeholder="October outreach">
+            <label for="campaign-search">Choose recipients</label><input id="campaign-search" type="search" placeholder="Search business, Viber name, or number">
+            <div class="campaign-selection-tools"><label for="campaign-batch-size">Batch size</label><input id="campaign-batch-size" type="number" min="1" max="100" value="100"><button id="campaign-select" type="button">Select first 100</button><button id="campaign-clear" type="button">Clear selection</button></div>
+            <p id="campaign-selection-count" class="hint" role="status"></p>
+            <div id="campaign-contact-list" class="campaign-contact-list" aria-label="Campaign recipients"></div>
+            <label for="campaign-text">Message template</label><textarea id="campaign-text" rows="3" maxlength="4000" required placeholder="Zdravo {{name}}, …"></textarea>
+            <p class="hint">Use {{company}}, {{phone}}, or {{name}} (saved Viber name, otherwise business name). {{viber_name}} requires a saved Viber name. One line of text; no emoji.</p>
+            <div class="campaign-grid">
+              <label for="campaign-start">Start date and time</label><input id="campaign-start" type="datetime-local" required>
+              <label for="campaign-interval">Minutes between messages</label><input id="campaign-interval" type="number" min="1" max="1440" value="5" required>
+              <label for="campaign-cap">Maximum messages per day</label><input id="campaign-cap" type="number" min="1" max="100" value="100" required>
+              <label for="campaign-window-start">Daily sending window</label><div class="campaign-window"><input id="campaign-window-start" type="time" value="09:00" aria-label="Sending window start" required><span>to</span><input id="campaign-window-end" type="time" value="17:00" aria-label="Sending window end" required></div>
+            </div>
+            <p class="hint">All dates and windows use Europe/Warsaw. Messages that do not fit in the daily window continue on the next day. Keep the local app running, Windows unlocked, and Viber restored behind another window.</p>
+            <div class="actions"><button id="campaign-create" class="primary" type="submit">Create draft</button></div>
+          </fieldset>
+        </form>
+      </details>
+      <p id="campaign-status" role="status" aria-live="polite"></p>
+      <button id="campaign-recover" type="button" hidden>Check saved campaign submission</button>
+      <div id="campaign-review" class="confirmation" hidden>
+        <h3 id="campaign-review-title">Review campaign</h3>
+        <p id="campaign-review-meta"></p>
+        <p class="hint">Check every phone number, expanded message, and send time. Each recipient is verified through Viber's dial pad at dispatch. Business names stay unchanged; discovered Viber names are saved separately.</p>
+        <div id="campaign-review-recipients" class="campaign-recipient-review"></div>
+        <label><input id="campaign-confirm-check" type="checkbox"><span>I reviewed these recipients, messages, and times, and authorize this campaign to send automatically.</span></label>
+        <p id="campaign-review-expiry" class="hint"></p>
+        <div class="actions"><button id="campaign-activate" class="primary" type="button" disabled>Schedule campaign</button><button id="campaign-close-review" type="button">Close review</button></div>
+      </div>
+      <h3 class="campaign-list-heading">Your campaigns</h3>
+      <p class="hint">Pause or cancel stops the remaining messages; an action already sending may finish. A blocked, missed, or uncertain attempt pauses the campaign. Review Viber before resuming the remaining contacts. Dispatched counts are send actions, not delivery receipts.</p>
+      <div id="campaign-list"></div>
+    </section>
     <section id="contacts" aria-labelledby="contacts-title" hidden>
       <h2 id="contacts-title">Viber contacts</h2>
       <p class="hint">Your existing CLI contact ledger. Business names and Android contact names stay as they are. The person's Viber name is stored separately.</p>
@@ -110,6 +151,6 @@
     <section id="sent" aria-labelledby="sent-title" hidden><h2 id="sent-title">Viber send history</h2><p class="hint">Attempts made by this localhost app. For an unknown outcome, check Viber before trying again.</p><div id="sent-list"></div><button id="sent-more" type="button" hidden>Load more attempts</button></section>
     <section id="inbox" aria-labelledby="inbox-title" hidden><h2 id="inbox-title">Saved conversation snapshots</h2><p class="hint">The latest visible messages you read for each contact. Use Conversation to refresh a snapshot. Viber does not expose a complete inbox or reliable reply classification.</p><div id="inbox-list"></div><button id="inbox-more" type="button" hidden>Load more snapshots</button></section>
   </main>
-  <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Sending requires a verified recipient and your confirmation. Scheduled messages run while this app is open. Email campaigns remain in EmailOutreach.</footer>
+  <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Sending requires a verified recipient and your confirmation. Scheduled messages and campaigns run while the local server is running. Email campaigns remain in EmailOutreach.</footer>
 </body>
 </html>
