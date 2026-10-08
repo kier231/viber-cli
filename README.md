@@ -5,8 +5,8 @@ sending to, or reading Viber Desktop chats. The default chat path enters a phone
 number on Viber's dial pad and presses its message button without moving the
 Windows mouse or taking keyboard focus. It also includes a localhost web app
 that preserves the existing EmailOutreach UI and adds a ViberOutreach workspace.
-Viber actions are manually triggered and run one at a time; there are no Viber
-campaigns, schedules, automatic replies, or unattended sends.
+Manual and scheduled Viber actions run one at a time. There are no Viber
+campaigns or automatic replies.
 
 ## Localhost app
 
@@ -32,18 +32,44 @@ Use `--email-port` if the existing service uses another loopback port.
 
 ViberOutreach provides compose with recipient review, contact search and
 pagination, verified Android contact creation, separate Viber name editing,
-background open/read/send, current-chat reading, saved visible conversation
-snapshots, send history, daily activity, an event log, and setup/control
+background open/read/send, scheduled messages with cancellation, current-chat
+reading, saved visible conversation snapshots, send history, daily activity, an event log, and setup/control
 diagnostics. It shares `leads.sqlite3` with the CLI and uses the same business
 and Android contact names. Sending opens the phone through the dial pad,
 reads the Viber name, shows the exact recipient and text, then requires a
 checkbox and **Send message**. It verifies the recipient again at dispatch.
 
+### Scheduling Viber messages
+
+In **ViberOutreach → Compose**, select a contact, write the message, and check
+**Send later**. Choose a date and time or **Send in X minutes**. Press
+**Review scheduled message**, check the recipient, text, and exact time, then
+confirm with **Schedule message**. A delay is measured from the review request;
+the confirmation displays the resulting fixed send time. Dates use
+**Europe/Warsaw**, including daylight saving, independently of the Windows time
+zone. Repeated or nonexistent daylight-saving times must be changed, or you
+can use a delay instead. Send times can be up to 365 days ahead.
+
+The **Scheduled** page shows saved messages, countdowns, outcomes, and a
+**Cancel schedule** button for messages that have not started. Queued messages
+are saved in SQLite and survive app restarts. The scheduler runs in the local
+server, so the browser tab can be closed; keep `web.py` running, the PC awake,
+Windows unlocked, and Viber restored behind another window. The scheduler
+uses the same desktop worker as manual actions and rechecks the saved contact,
+phone number, Viber name, and message before dispatch.
+
+After a restart or a busy desktop worker, a message up to 15 minutes overdue
+can still run. Older messages become **MISSED** and are not sent. A failed
+recipient/setup check becomes **BLOCKED**; an uncertain attempt becomes
+**UNKNOWN**. Neither is retried automatically. Review Viber and create a new
+schedule if needed. Cancellation fails once the send operation has started.
+
 Viber's visible messages are not a full inbox, and accessibility does not
 always reveal direction or delivery receipts. The UI labels these as snapshots
 and send actions. Email scheduling and campaigns stay in EmailOutreach.
-No message is sent just by opening the app, switching workspaces, reviewing a
-message, reading chats, or checking health.
+Reviewing a message, reading chats, switching workspaces, and checking health
+do not send it. Confirmed Viber schedules dispatch automatically when due
+while the server is running, including eligible overdue schedules at restart.
 
 The server binds only to `127.0.0.1` and checks the Host, Origin, and browser
 tokens. Viber desktop actions run on one COM worker so web requests remain
@@ -55,7 +81,8 @@ database while the first is running. Stop the app with Ctrl+C; it finishes any
 active operation before exiting.
 
 The extra SQLite tables are `web_operations`, `web_sends`, `web_reads`, and
-`web_events`. They contain local message text and snapshots and are ignored by
+`web_events`. `web_sends` also stores the scheduled UTC time and the reviewed
+recipient snapshot. These tables contain local message text and snapshots and are ignored by
 Git with the contact database. The old CLI commands continue to work; avoid
 running a separate CLI desktop action during a web desktop action.
 

@@ -96,9 +96,9 @@ class WebServiceTests(unittest.TestCase):
             self.service.send(self.payload(preview))
         preview = self.preview()
         self.service.store.set_viber_name(self.lead.id, "Changed name")
-        result = self.completed(self.service.send(self.payload(preview)))
-        self.assertEqual(result["state"], "FAILED")
-        self.assertEqual(self.service.records("sent")[0]["state"], "BLOCKED")
+        with self.assertRaisesRegex(ValueError, "changed after review"):
+            self.service.send(self.payload(preview))
+        self.assertEqual(self.service.records("sent"), [])
         self.assertEqual(FakeDesktop.sent, [])
 
     def test_changed_viber_header_after_review_blocks_send(self):
@@ -134,7 +134,8 @@ class WebServiceTests(unittest.TestCase):
     def test_restart_marks_interrupted_attempt_unknown(self):
         with closing(self.service.store._connect()) as db, db:
             db.execute("INSERT INTO web_operations VALUES('interrupted','send','RUNNING',?,NULL,NULL)", ("2026-01-01",))
-            db.execute("INSERT INTO web_sends VALUES('s','k','h','interrupted',1,'+381641234567',"
+            db.execute("INSERT INTO web_sends(id,request_key,preview_hash,operation_id,lead_id,phone,company_name,"
+                       "viber_name,text,state,created_at,updated_at,error) VALUES('s','k','h','interrupted',1,'+381641234567',"
                        "'Business','Person','Text','SUBMITTING','2026-01-01','2026-01-01',NULL)")
         self.service.close()
         self.service = WebService(self.path, FakeDesktop, lambda *_: None)

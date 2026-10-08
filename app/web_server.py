@@ -149,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(200, {"pending": service.pending, "contacts": len(service.store.all())})
             if path.startswith("/viber/api/operations/"):
                 return self._reply(200, service.operation(path.rsplit("/", 1)[1]))
-            if path in {"/viber/api/sent", "/viber/api/events", "/viber/api/inbox"}:
+            if path in {"/viber/api/sent", "/viber/api/scheduled", "/viber/api/events", "/viber/api/inbox"}:
                 offset = int(query.get("offset", ["0"])[0])
                 if offset < 0:
                     raise ValueError("Invalid page offset.")
@@ -167,9 +167,11 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/viber/api/read-current":
                 result = service.read_current()
             elif path == "/viber/api/prepare":
-                result = service.prepare(payload.get("lead_id"), payload.get("text"))
+                result = service.prepare(payload.get("lead_id"), payload.get("text"), payload.get("schedule"))
             elif path == "/viber/api/send":
                 result = service.send(payload)
+            elif path == "/viber/api/cancel-scheduled":
+                return self._reply(200, service.cancel_scheduled(payload.get("send_id")))
             elif path in {"/viber/api/diagnostics", "/viber/api/inspect"}:
                 result = service.diagnostics(inspect=path.endswith("/inspect"))
             else:

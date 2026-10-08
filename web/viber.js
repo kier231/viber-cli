@@ -2,15 +2,21 @@
 (() => {
   const $ = id => document.getElementById(id);
   const node = (tag, text, className) => { const element = document.createElement(tag); if (text != null) element.textContent = text; if (className) element.className = className; return element; };
-  const date = value => value ? new Date(value).toLocaleString() : '—';
+  const timeZone = 'Europe/Warsaw';
+  const date = value => value ? new Date(value).toLocaleString(undefined, {timeZone, timeZoneName: 'short'}) : '—';
+  const localDateTime = value => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hourCycle:'h23'}).formatToParts(value).map(part => [part.type, part.value]));
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  };
   const showError = error => { $('error').textContent = error.message || 'The local request failed.'; $('error').hidden = false; };
   const clearError = () => { $('error').hidden = true; };
   const action = work => async event => { event?.preventDefault(); clearError(); try { await work(event); } catch (error) { showError(error); } };
-  const views = ['compose', 'contacts', 'conversation', 'activity', 'health', 'events', 'sent', 'inbox'];
+  const views = ['compose', 'scheduled', 'contacts', 'conversation', 'activity', 'health', 'events', 'sent', 'inbox'];
   const pendingKey = 'viberoutreach-pending-send';
   const draftKey = 'viberoutreach-draft';
   let csrf, contacts = [], view = 'compose', busy = false, preview = null, conversationLead = null, contactPage = 0;
-  let offsets = { events: 0, sent: 0, inbox: 0 };
+  let offsets = { events: 0, sent: 0, inbox: 0, scheduled: 0 };
+  let schedulesLoading = false;
   let pending = null;
   try { pending = JSON.parse(localStorage.getItem(pendingKey) || 'null'); }
   catch { showError(new Error('The saved send attempt cannot be read. Check Sent before sending another message.')); }
@@ -20,7 +26,7 @@
       headers: { 'Content-Type': 'application/json', 'X-Viber-CSRF': csrf || '', ...(path === 'session' ? {'X-Viber-Browser': '1'} : {}) },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }), signal: AbortSignal.timeout(15000) });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.message || `Request failed (${response.status}).`);
+    if (!response.ok) { const error = new Error(result.message || `Request failed (${response.status}).`); error.status = response.status; throw error; }
     return result;
   }
 
@@ -58,11 +64,34 @@
     $('compose-fields').disabled = busy || !!preview || !!pending;
     $('confirm-check').disabled = busy;
     $('confirm-cancel').disabled = busy;
-    $('confirm-send').disabled = busy || !$('confirm-check').checked || !preview || preview.expires_at * 1000 <= Date.now();
+    $('confirm-send').disabled = busy || !$('confirm-check').checked || !preview || preview.expires_at * 1000 <= Date.now() || (preview.scheduled_at && new Date(preview.scheduled_at).getTime() <= Date.now());
+    $('confirm-send').textContent = preview?.scheduled_at ? 'Schedule message' : 'Send message';
+    $('send').textContent = $('schedule-enabled').checked ? 'Review scheduled message' : 'Review message';
     $('recover-send').hidden = !pending;
     $('recover-send').disabled = busy;
     $('new-message').disabled = busy || !!pending;
     $('confirmation').hidden = !preview;
+    setScheduleState();
+  }
+
+  function setScheduleState() {
+    const enabled = $('schedule-enabled').checked;
+    const delay = $('schedule-mode').value === 'delay';
+    const locked = busy || !!preview || !!pending;
+    $('schedule-options').hidden = !enabled;
+    $('schedule-mode').disabled = locked || !enabled;
+    $('schedule-time-wrap').hidden = delay;
+    $('schedule-delay-wrap').hidden = !delay;
+    $('schedule-at').disabled = locked || !enabled || delay;
+    $('schedule-at').required = enabled && !delay;
+    $('schedule-delay-minutes').disabled = locked || !enabled || !delay;
+    $('schedule-delay-minutes').required = enabled && delay;
+  }
+
+  function schedulePayload() {
+    if (!$('schedule-enabled').checked) return undefined;
+    if ($('schedule-mode').value === 'delay') return {mode: 'delay', minutes: Number($('schedule-delay-minutes').value)};
+    return {mode: 'datetime', local_time: $('schedule-at').value, time_zone: timeZone};
   }
 
   function recipientDetail() {
@@ -71,7 +100,9 @@
   }
 
   function saveDraft() {
-    localStorage.setItem(draftKey, JSON.stringify({ lead_id: $('to').value, text: $('body').value }));
+    localStorage.setItem(draftKey, JSON.stringify({ lead_id: $('to').value, text: $('body').value,
+      schedule_enabled: $('schedule-enabled').checked, schedule_mode: $('schedule-mode').value,
+      schedule_at: $('schedule-at').value, delay_minutes: $('schedule-delay-minutes').value }));
   }
 
   async function loadContacts() {
@@ -154,14 +185,32 @@
   }
 
   async function loadRecords(kind, more = false) {
+    if (kind === 'scheduled' && schedulesLoading) return;
+    if (kind === 'scheduled') schedulesLoading = true;
+    try {
     if (!more) offsets[kind] = 0;
     const records = await api(kind + '?offset=' + offsets[kind]);
     const list = $(kind === 'events' ? 'event-list' : kind + '-list');
+    const expanded = new Set(Array.from(list.querySelectorAll('details[open]')).map(item => item.dataset.id));
     if (!more) list.replaceChildren();
-    if (!records.length && !more) list.append(node('p', kind === 'inbox' ? 'No conversation snapshots yet. Read a contact to save one.' : 'No recorded items yet.', 'viber-empty'));
+    if (!records.length && !more) list.append(node('p', kind === 'inbox' ? 'No conversation snapshots yet. Read a contact to save one.' : kind === 'scheduled' ? 'No scheduled messages yet. Choose Send later in Compose.' : 'No recorded items yet.', 'viber-empty'));
     for (const item of records) {
       const record = node('details', null, 'viber-record');
-      if (kind === 'sent') {
+      record.dataset.id = item.id || item.lead_id;
+      record.open = expanded.has(record.dataset.id);
+      if (kind === 'scheduled') {
+        record.append(node('summary', `${item.company_name} · ${item.viber_name} · ${item.state}`), node('p', `Send time: ${date(item.scheduled_at)} · Europe/Warsaw`, 'hint'), node('p', item.phone, 'hint'), node('pre', item.text));
+        if (item.state === 'SCHEDULED') {
+          const countdown = node('p', '', 'send-countdown'); countdown.dataset.due = item.scheduled_at; record.append(countdown);
+          record.append(contactButton('Cancel schedule', async () => {
+            await api('cancel-scheduled', {send_id: item.id});
+            $('schedule-status').textContent = 'Schedule cancelled. No message will be sent by this schedule.';
+            await loadRecords('scheduled');
+          }));
+        }
+        if (item.error) record.append(node('p', item.error, 'warning'));
+        if (item.state === 'DISPATCHED') record.append(node('p', 'Send action dispatched; delivery is unverified.', 'hint'));
+      } else if (kind === 'sent') {
         record.append(node('summary', `${item.company_name} · ${item.viber_name} · ${item.state}`), node('p', `${item.phone} · ${date(item.created_at)}`, 'hint'), node('pre', item.text));
         if (item.error) record.append(node('p', item.error, 'warning'));
         else if (item.state === 'DISPATCHED') record.append(node('p', 'Send action dispatched; delivery is unverified.', 'hint'));
@@ -175,6 +224,15 @@
     }
     offsets[kind] += records.length;
     $(kind === 'events' ? 'event-more' : kind + '-more').hidden = records.length < 100;
+    updateCountdowns();
+    } finally { if (kind === 'scheduled') schedulesLoading = false; }
+  }
+
+  function updateCountdowns() {
+    for (const element of document.querySelectorAll('[data-due]')) {
+      const seconds = Math.ceil((new Date(element.dataset.due).getTime() - Date.now()) / 1000);
+      element.textContent = seconds > 0 ? `Due in ${Math.ceil(seconds / 60)} minute${seconds > 60 ? 's' : ''}` : 'Due now · waiting for the desktop worker';
+    }
   }
 
   async function loadActivity() {
@@ -192,7 +250,7 @@
     history.replaceState(null, '', '/viber#' + next);
     if (next === 'contacts') renderContacts();
     if (next === 'activity') await loadActivity();
-    if (['events', 'sent', 'inbox'].includes(next)) await loadRecords(next);
+    if (['events', 'sent', 'inbox', 'scheduled'].includes(next)) await loadRecords(next);
   }
 
   async function checkHealth(inspect = false) {
@@ -213,8 +271,10 @@
         const task = await api('send', pending.payload); pending.operation_id = task.operation_id; localStorage.setItem(pendingKey, JSON.stringify(pending));
       }
       try {
-        await waitOperation(pending.operation_id);
-        $('send-result').textContent = 'Send action dispatched to Viber. Delivery is unverified. Open Sent for the attempt details.';
+        const result = await waitOperation(pending.operation_id);
+        $('send-result').textContent = result.state === 'SCHEDULED'
+          ? `Message scheduled for ${date(result.scheduled_at)} · Europe/Warsaw. Review or cancel it in Scheduled.`
+          : 'Send action dispatched to Viber. Delivery is unverified. Open Sent for the attempt details.';
       } catch (error) {
         $('send-result').textContent = 'The attempt stopped. Review Sent and Viber before trying again.';
         throw error;
@@ -223,17 +283,32 @@
         const state = await api('operations/' + encodeURIComponent(pending.operation_id));
         if (['SUCCEEDED', 'FAILED', 'INTERRUPTED'].includes(state.state)) { pending = null; localStorage.removeItem(pendingKey); preview = null; }
       }
+    } catch (error) {
+      if (error.status === 400 && pending && !pending.operation_id) {
+        pending = null; preview = null; localStorage.removeItem(pendingKey);
+      }
+      throw error;
     } finally { setBusy(false); }
   }
 
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', action(() => navigate(button.dataset.view))));
   $('to').addEventListener('change', () => { preview = null; recipientDetail(); saveDraft(); updateCompose(); });
   $('body').addEventListener('input', () => { preview = null; saveDraft(); updateCompose(); });
+  for (const id of ['schedule-enabled', 'schedule-mode', 'schedule-at', 'schedule-delay-minutes']) $(id).addEventListener('change', () => {
+    preview = null;
+    if ($('schedule-enabled').checked && !$('schedule-at').value) $('schedule-at').value = localDateTime(new Date(Date.now() + 3600000));
+    updateCompose(); saveDraft();
+  });
   $('compose-form').addEventListener('submit', action(async () => {
     if (pending) throw new Error('Check the saved send attempt first.');
-    preview = await operation('prepare', { lead_id: Number($('to').value), text: $('body').value }, 'Opening the dial pad and verifying this recipient. No message is sent during review…');
+    const schedule = schedulePayload();
+    const reviewed = await operation('prepare', { lead_id: Number($('to').value), text: $('body').value, schedule }, 'Opening the dial pad and verifying this recipient. No message is sent during review…');
+    if (schedule && !reviewed.scheduled_at) throw new Error('The server needs to restart to enable scheduling. Refresh after the update.');
+    preview = reviewed;
     $('confirm-recipient').replaceChildren();
     for (const [label, value] of [['Business', preview.lead.company_name], ['Viber name', preview.viber_name], ['Phone', preview.lead.phone], ['Android contact', preview.lead.contact_name]]) $('confirm-recipient').append(node('dt', label), node('dd', value));
+    if (preview.scheduled_at) $('confirm-recipient').append(node('dt', 'Send time'), node('dd', date(preview.scheduled_at) + ' · Europe/Warsaw'));
+    $('confirm-label').textContent = preview.scheduled_at ? 'I checked this recipient, message, and scheduled time.' : 'I checked this recipient and message.';
     $('confirm-body').textContent = preview.text; $('confirm-check').checked = false;
     updateCompose(); await loadContacts(); $('confirmation').scrollIntoView({block: 'nearest', behavior: 'smooth'});
   }));
@@ -246,7 +321,7 @@
     await recoverSend();
   }));
   $('recover-send').addEventListener('click', action(recoverSend));
-  $('new-message').addEventListener('click', () => { preview = null; $('body').value = ''; $('send-result').textContent = ''; saveDraft(); updateCompose(); });
+  $('new-message').addEventListener('click', () => { preview = null; $('body').value = ''; $('schedule-enabled').checked = false; $('send-result').textContent = ''; saveDraft(); updateCompose(); });
   $('compose-open').addEventListener('click', action(async () => { await operation('open', { lead_id: Number($('to').value) }, 'Opening and verifying this number in the background…'); await loadContacts(); $('send-result').textContent = 'Conversation opened without taking Windows focus.'; }));
   $('contact-form').addEventListener('submit', action(async () => {
     const result = await operation('contacts', { phone: $('contact-phone').value, company_name: $('contact-company').value }, 'Adding and verifying the Android contact…');
@@ -261,15 +336,23 @@
   $('activity-form').addEventListener('submit', action(loadActivity));
   $('check-health').addEventListener('click', action(() => checkHealth()));
   $('inspect').addEventListener('click', action(() => checkHealth(true)));
-  for (const kind of ['sent', 'events', 'inbox']) $(kind === 'events' ? 'event-more' : kind + '-more').addEventListener('click', action(() => loadRecords(kind, true)));
+  for (const kind of ['sent', 'events', 'inbox', 'scheduled']) $(kind === 'events' ? 'event-more' : kind + '-more').addEventListener('click', action(() => loadRecords(kind, true)));
   $('refresh').addEventListener('click', action(async () => { await loadContacts(); if (view === 'health') await checkHealth(); else await navigate(view); }));
   window.addEventListener('storage', event => {
     if (event.key === pendingKey) { try { pending = JSON.parse(event.newValue || 'null'); updateCompose(); } catch (error) { showError(error); } }
   });
   setInterval(() => { if (preview) updateCompose(); }, 1000);
+  setInterval(() => {
+    updateCountdowns();
+    if (csrf && !document.hidden && view === 'scheduled' && !busy && offsets.scheduled <= 100) loadRecords('scheduled').catch(showError);
+  }, 5000);
   action(async () => {
     const session = await api('session', {}); csrf = session.csrf; await loadContacts();
-    try { const draft = JSON.parse(localStorage.getItem(draftKey) || 'null'); if (draft) { $('to').value = draft.lead_id || ''; $('body').value = draft.text || ''; recipientDetail(); } } catch { /* A broken unsent draft can be rewritten. */ }
+    try { const draft = JSON.parse(localStorage.getItem(draftKey) || 'null'); if (draft) {
+      $('to').value = draft.lead_id || ''; $('body').value = draft.text || '';
+      $('schedule-enabled').checked = !!draft.schedule_enabled; $('schedule-mode').value = draft.schedule_mode === 'delay' ? 'delay' : 'datetime';
+      $('schedule-at').value = draft.schedule_at || ''; $('schedule-delay-minutes').value = draft.delay_minutes || '60'; recipientDetail();
+    } } catch { /* A broken unsent draft can be rewritten. */ }
     updateCompose();
     const requested = location.hash.slice(1); await navigate(views.includes(requested) ? requested : 'compose');
     if (pending) $('send-result').textContent = 'A send attempt is saved. Check its status before composing another message.';

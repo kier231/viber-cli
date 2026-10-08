@@ -12,10 +12,12 @@ import sys
 import threading
 import time
 import uuid
+from zoneinfo import ZoneInfo
 
 from app.android_contacts import add_android_contact, _find_adb
 from app.models import LeadStore
 from app.phone import normalize_serbian_phone
+from app.scheduling import parse_schedule, MAX_LATENESS_SECONDS, TIME_ZONE
 from app.viber import ViberError
 from app.viber_background import BackgroundViberClient, _usable_viber_name
 
@@ -32,9 +34,13 @@ def validate_message(text):
     return text
 
 
+class MissedSchedule(ViberError):
+    pass
+
+
 class WebService:
     def __init__(self, path, client_factory=BackgroundViberClient,
-                 android_add=add_android_contact):
+                 android_add=add_android_contact, start_scheduler=False):
         self.store = LeadStore(path)
         self.client_factory = client_factory
         self.android_add = android_add
@@ -43,6 +49,8 @@ class WebService:
         self.previews = {}
         self.pending = 0
         self.closed = False
+        self.scheduler_stop = threading.Event()
+        self.scheduler = None
         with closing(self.store._connect()) as db, db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS web_operations (
@@ -62,16 +70,34 @@ class WebService:
                     lead_id INTEGER PRIMARY KEY, viber_name TEXT NOT NULL,
                     captured_at TEXT NOT NULL, messages TEXT NOT NULL);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(web_sends)")}
+            for column in ("scheduled_at", "lead_snapshot"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE web_sends ADD COLUMN {column} TEXT")
             db.execute("UPDATE web_operations SET state='INTERRUPTED', "
                        "error='The app stopped during this operation. Review Sent before trying again.' "
                        "WHERE state IN ('QUEUED', 'RUNNING')")
             db.execute("UPDATE web_sends SET state='UNKNOWN', updated_at=?, "
                        "error='The app stopped during this attempt. Check Viber manually; do not resend automatically.' "
                        "WHERE state IN ('QUEUED', 'SUBMITTING')", (now(),))
+        if start_scheduler:
+            self.start_scheduler()
+
+    def start_scheduler(self):
+        with self.lock:
+            if self.closed:
+                raise ValueError("The localhost app is stopping.")
+            if self.scheduler and self.scheduler.is_alive():
+                return
+            self.scheduler = threading.Thread(target=self._schedule_loop, name="viber-scheduler", daemon=True)
+            self.scheduler.start()
 
     def close(self):
         with self.lock:
             self.closed = True
+            self.scheduler_stop.set()
+        if self.scheduler:
+            self.scheduler.join()
         self.pool.shutdown(wait=True)
 
     def event(self, kind, detail):
@@ -211,9 +237,10 @@ class WebService:
             return {"viber_name": name, "messages": messages, "captured_at": now()}
         return self._enqueue("read-current", work)
 
-    def prepare(self, lead_id, text):
+    def prepare(self, lead_id, text, schedule=None):
         self.lead(lead_id)
         text = validate_message(text)
+        timing = parse_schedule(schedule)
         def work():
             client, lead, name = self._verified(lead_id)
             if not client.verify_current_name(name):
@@ -221,6 +248,8 @@ class WebService:
             token = secrets.token_urlsafe(32)
             preview = {"token": token, "lead": asdict(lead), "viber_name": name,
                        "text": text, "expires_at": time.time() + 120}
+            if timing:
+                preview.update(timing)
             with self.lock:
                 self.previews = {key: value for key, value in self.previews.items()
                                  if value["expires_at"] > time.time()}
@@ -252,31 +281,128 @@ class WebService:
             preview = self.previews.get(token)
             if not preview or preview["expires_at"] <= time.time():
                 raise ValueError("This preview expired or was used. Review the message again.")
+            scheduled_at = preview.get("scheduled_at")
+            if scheduled_at and datetime.fromisoformat(scheduled_at).timestamp() <= time.time():
+                raise ValueError("The scheduled time has passed. Choose a future time and review again.")
+            if asdict(self.lead(preview["lead"]["id"])) != preview["lead"]:
+                raise ValueError("The saved contact changed after review. Review the message again.")
             if self.pending >= 10:
                 raise ValueError("Wait for the queued Viber operations to finish.")
             send_id = str(uuid.uuid4())
             operation_id = str(uuid.uuid4())
             lead = preview["lead"]
+            state = "SCHEDULED" if scheduled_at else "QUEUED"
+            scheduled_result = {"send_id": send_id, "state": state, "scheduled_at": scheduled_at}
             with closing(self.store._connect()) as db, db:
-                db.execute("INSERT INTO web_operations(id,kind,state,created_at) VALUES(?,'send','QUEUED',?)",
-                           (operation_id, now()))
-                db.execute("INSERT INTO web_sends VALUES(?,?,?,?,?,?,?,?,?,'QUEUED',?,?,NULL)",
+                db.execute("INSERT INTO web_operations(id,kind,state,created_at,result) VALUES(?,?,?,?,?)",
+                           (operation_id, "schedule" if scheduled_at else "send", "SUCCEEDED" if scheduled_at else "QUEUED",
+                            now(), json.dumps(scheduled_result) if scheduled_at else None))
+                db.execute("INSERT INTO web_sends(id,request_key,preview_hash,operation_id,lead_id,phone,company_name,"
+                           "viber_name,text,state,created_at,updated_at,scheduled_at,lead_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (send_id, request_key, token_hash, operation_id, lead["id"], lead["phone"],
-                            lead["company_name"], preview["viber_name"], preview["text"], now(), now()))
+                            lead["company_name"], preview["viber_name"], preview["text"], state, now(), now(), scheduled_at,
+                            json.dumps(lead, ensure_ascii=False)))
+                if scheduled_at:
+                    db.execute("INSERT INTO web_events(created_at,kind,detail) VALUES(?,?,?)",
+                               (now(), "SCHEDULED", f"Scheduled contact #{lead['id']}: {preview['viber_name']} at {scheduled_at}."))
             del self.previews[token]
-            self.pending += 1
-            self.pool.submit(self._run, operation_id, lambda: self._send(send_id, preview))
+            if not scheduled_at:
+                self.pending += 1
+                self.pool.submit(self._run, operation_id, lambda: self._send(send_id, preview))
             return {"operation_id": operation_id, "send_id": send_id}
+
+    def cancel_scheduled(self, send_id):
+        if not isinstance(send_id, str):
+            raise ValueError("Choose a scheduled message.")
+        with self.lock, closing(self.store._connect()) as db, db:
+            row = db.execute("UPDATE web_sends SET state='CANCELLED', updated_at=? WHERE id=? AND state='SCHEDULED'",
+                             (now(), send_id))
+            if row.rowcount != 1:
+                raise ValueError("This message is no longer waiting. It may already be sending; check Scheduled and Sent.")
+            db.execute("INSERT INTO web_events(created_at,kind,detail) VALUES(?,?,?)",
+                       (now(), "SCHEDULE_CANCELLED", f"Cancelled scheduled message {send_id}."))
+        return {"send_id": send_id, "state": "CANCELLED"}
+
+    def _schedule_loop(self):
+        while not self.scheduler_stop.is_set():
+            try:
+                self._dispatch_due()
+            except Exception as exc:
+                try:
+                    self.event("SCHEDULER_ERROR", str(exc))
+                except Exception:
+                    pass
+                self.scheduler_stop.wait(5)
+            self.scheduler_stop.wait(1)
+
+    def _dispatch_due(self):
+        """Claim one due message atomically, using the same worker as manual actions."""
+        with self.lock:
+            if self.closed:
+                return None
+            current = datetime.now(timezone.utc)
+            task = None
+            with closing(self.store._connect()) as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                rows = db.execute("SELECT * FROM web_sends WHERE state='SCHEDULED' AND scheduled_at<=? "
+                                  "ORDER BY scheduled_at, created_at LIMIT 100", (current.isoformat(timespec="seconds"),)).fetchall()
+                for row in rows:
+                    late = current.timestamp() - datetime.fromisoformat(row["scheduled_at"]).timestamp()
+                    if late > MAX_LATENESS_SECONDS:
+                        error = "More than 15 minutes overdue. No message was sent; create a new schedule if needed."
+                        db.execute("UPDATE web_sends SET state='MISSED',error=?,updated_at=? WHERE id=?",
+                                   (error, now(), row["id"]))
+                        db.execute("INSERT INTO web_events(created_at,kind,detail) VALUES(?,?,?)",
+                                   (now(), "SCHEDULE_MISSED", f"Missed scheduled message for contact #{row['lead_id']}."))
+                        continue
+                    if self.pending:
+                        continue
+                    try:
+                        lead = json.loads(row["lead_snapshot"])
+                        if not isinstance(lead, dict) or lead.get("id") != row["lead_id"] or lead.get("phone") != row["phone"]:
+                            raise ValueError("The saved scheduled recipient is invalid.")
+                        text = validate_message(row["text"])
+                    except (ValueError, TypeError) as exc:
+                        db.execute("UPDATE web_sends SET state='BLOCKED',error=?,updated_at=? WHERE id=?",
+                                   (str(exc), now(), row["id"]))
+                        continue
+                    preview = {"lead": lead, "viber_name": row["viber_name"], "text": text,
+                               "scheduled_at": row["scheduled_at"]}
+                    operation_id = str(uuid.uuid4())
+                    db.execute("INSERT INTO web_operations(id,kind,state,created_at) VALUES(?,'scheduled-send','QUEUED',?)",
+                               (operation_id, now()))
+                    db.execute("UPDATE web_sends SET state='QUEUED',operation_id=?,updated_at=? WHERE id=? AND state='SCHEDULED'",
+                               (operation_id, now(), row["id"]))
+                    task = (operation_id, row["id"], preview)
+                    break
+            if task:
+                operation_id, send_id, preview = task
+                self.pending += 1
+                self.pool.submit(self._run, operation_id, lambda: self._send(send_id, preview))
+                return {"operation_id": operation_id, "send_id": send_id}
+            return None
+
+    @staticmethod
+    def _check_deadline(preview):
+        if preview.get("scheduled_at"):
+            due = datetime.fromisoformat(preview["scheduled_at"]).timestamp()
+            if time.time() - due > MAX_LATENESS_SECONDS:
+                raise MissedSchedule("More than 15 minutes overdue. No message was sent.")
 
     def _send(self, send_id, preview):
         submitting = False
         try:
+            self._check_deadline(preview)
+            validate_message(preview["text"])
             before = self.lead(preview["lead"]["id"])
             if asdict(before) != preview["lead"]:
                 raise ViberError("The saved contact changed after review. No message was sent.")
             client, lead, name = self._verified(before.id)
             if name != preview["viber_name"] or not client.verify_current_name(name):
                 raise ViberError("The Viber recipient changed after review. No message was sent.")
+            if asdict(lead) != preview["lead"]:
+                raise ViberError("The saved contact changed while opening Viber. No message was sent.")
+            self._check_deadline(preview)
             with closing(self.store._connect()) as db, db:
                 db.execute("UPDATE web_sends SET state='SUBMITTING', updated_at=? WHERE id=?", (now(), send_id))
             submitting = True
@@ -286,23 +412,28 @@ class WebService:
             self.event("SEND_DISPATCHED", f"Send action dispatched for contact #{lead.id}: {name}. Delivery unverified.")
             return {"send_id": send_id, "state": "DISPATCHED", "viber_name": name}
         except Exception as exc:
-            state = "UNKNOWN" if submitting else "BLOCKED"
+            state = "UNKNOWN" if submitting else "MISSED" if isinstance(exc, MissedSchedule) else "BLOCKED"
             with closing(self.store._connect()) as db, db:
                 db.execute("UPDATE web_sends SET state=?, error=?, updated_at=? WHERE id=?",
                            (state, str(exc), now(), send_id))
             raise
 
     def records(self, kind, limit=100, offset=0):
-        table = {"sent": "web_sends", "events": "web_events", "inbox": "web_reads"}[kind]
+        table = {"sent": "web_sends", "scheduled": "web_sends", "events": "web_events", "inbox": "web_reads"}[kind]
         order = "captured_at" if kind == "inbox" else "created_at"
+        where = "WHERE scheduled_at IS NOT NULL" if kind == "scheduled" else "WHERE state NOT IN ('SCHEDULED','CANCELLED','MISSED')" if kind == "sent" else ""
+        order_by = ("CASE WHEN state='SCHEDULED' THEN 0 ELSE 1 END, "
+                    "CASE WHEN state='SCHEDULED' THEN scheduled_at END, scheduled_at DESC" if kind == "scheduled"
+                    else f"{order} DESC, rowid DESC")
         with closing(self.store._connect()) as db:
-            rows = db.execute(f"SELECT * FROM {table} ORDER BY {order} DESC, rowid DESC LIMIT ? OFFSET ?",
+            rows = db.execute(f"SELECT * FROM {table} {where} ORDER BY {order_by} LIMIT ? OFFSET ?",
                               (limit, offset)).fetchall()
         result = [dict(row) for row in rows]
         for row in result:
             # Never return internal confirmation hashes or submission keys in lists.
             row.pop("preview_hash", None)
             row.pop("request_key", None)
+            row.pop("lead_snapshot", None)
             if kind == "inbox":
                 row["messages"] = json.loads(row["messages"])
                 lead = self.store.get(row["lead_id"])
@@ -312,14 +443,15 @@ class WebService:
     def activity(self, days=30):
         if days not in {7, 30, 90}:
             raise ValueError("Choose 7, 30, or 90 days.")
-        today = datetime.now().astimezone().date()
+        zone = ZoneInfo(TIME_ZONE)
+        today = datetime.now(zone).date()
         totals = {str(today - timedelta(days=i)): {"dispatched": 0, "blocked": 0, "unknown": 0}
                   for i in range(days)}
         with closing(self.store._connect()) as db:
-            rows = db.execute("SELECT state, created_at FROM web_sends WHERE created_at>=?",
+            rows = db.execute("SELECT state, updated_at FROM web_sends WHERE updated_at>=?",
                               ((datetime.now(timezone.utc) - timedelta(days=days + 1)).isoformat(),)).fetchall()
         for row in rows:
-            day = str(datetime.fromisoformat(row["created_at"]).astimezone().date())
+            day = str(datetime.fromisoformat(row["updated_at"]).astimezone(zone).date())
             state = row["state"].lower()
             if day in totals and state in totals[day]:
                 totals[day][state] += 1

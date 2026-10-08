@@ -21,6 +21,7 @@
   <select id="sender" aria-label="Sending account"><option>Current Viber Desktop account</option></select>
   <nav aria-label="Viber workspace" class="viber-nav">
     <button type="button" data-view="compose" aria-current="page">Compose</button>
+    <button type="button" data-view="scheduled">Scheduled</button>
     <button type="button" data-view="contacts">Contacts</button>
     <button type="button" data-view="conversation">Conversation</button>
     <button type="button" data-view="activity">Daily activity</button>
@@ -41,6 +42,13 @@
           <label for="body">Message</label>
           <textarea id="body" rows="9" maxlength="4000" required placeholder="Write your message…"></textarea>
           <p class="hint">One line of text. Serbian letters are supported; emoji and line breaks are not.</p>
+          <div class="schedule-control"><input id="schedule-enabled" type="checkbox"><label for="schedule-enabled">Send later</label></div>
+          <div id="schedule-options" hidden>
+            <label for="schedule-mode">Schedule type</label><select id="schedule-mode"><option value="datetime">Choose date and time</option><option value="delay">Send in X minutes</option></select>
+            <div id="schedule-time-wrap"><label for="schedule-at">Send date and time</label><input id="schedule-at" type="datetime-local"><small>Europe/Warsaw time, including daylight saving.</small></div>
+            <div id="schedule-delay-wrap" hidden><label for="schedule-delay-minutes">Delay in minutes</label><input id="schedule-delay-minutes" type="number" min="1" max="525600" value="60"><small>The exact send time is shown when you review the message.</small></div>
+            <p class="hint">Keep this app running, Windows unlocked, and Viber restored behind another window. Messages over 15 minutes late are marked missed.</p>
+          </div>
           <div class="actions"><button id="send" type="submit">Review message</button><button id="new-message" type="button">New message</button><button id="compose-open" type="button">Open chat</button></div>
         </fieldset>
       </form>
@@ -48,12 +56,18 @@
         <h3>Review before sending</h3>
         <dl id="confirm-recipient" class="contact-detail-grid"></dl>
         <pre id="confirm-body"></pre>
-        <label><input id="confirm-check" type="checkbox">I checked this recipient and message.</label>
+        <label><input id="confirm-check" type="checkbox"><span id="confirm-label">I checked this recipient and message.</span></label>
         <p class="hint">The recipient is checked again before sending. This review expires after two minutes.</p>
         <div class="actions"><button id="confirm-send" class="primary" type="button" disabled>Send message</button><button id="confirm-cancel" type="button">Cancel review</button></div>
       </div>
       <p id="send-result" role="status" aria-live="polite"></p>
       <button id="recover-send" type="button" hidden>Check saved send attempt</button>
+    </section>
+    <section id="scheduled" aria-labelledby="scheduled-title" hidden>
+      <h2 id="scheduled-title">Scheduled Viber messages</h2>
+      <p class="hint">Send times use Europe/Warsaw. Keep the localhost app running and Viber restored behind another window. Saved schedules survive restarts; messages over 15 minutes overdue are marked missed. Blocked or uncertain sends are not retried automatically.</p>
+      <p id="schedule-status" role="status" aria-live="polite"></p>
+      <div id="scheduled-list"></div><button id="scheduled-more" type="button" hidden>Load more schedules</button>
     </section>
     <section id="contacts" aria-labelledby="contacts-title" hidden>
       <h2 id="contacts-title">Viber contacts</h2>
@@ -83,7 +97,7 @@
       <h2 id="activity-title">Daily Viber activity</h2>
       <form id="activity-form" class="activity-filters"><div><label for="activity-days">Period</label><select id="activity-days"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></div><button type="submit">Show activity</button></form>
       <div class="activity-summary"><div><span>Send actions dispatched</span><strong id="activity-dispatched">0</strong></div><div><span>Blocked before sending</span><strong id="activity-blocked">0</strong></div><div><span>Unknown outcomes</span><strong id="activity-unknown">0</strong></div><div><span>Saved contacts</span><strong id="activity-contacts">0</strong></div></div>
-      <p class="hint">This app's Viber attempts, grouped by your computer's local date. Dispatched does not mean delivered.</p>
+      <p class="hint">This app's Viber attempts, grouped by Europe/Warsaw date at the time of the attempt. Dispatched does not mean delivered.</p>
       <div class="activity-table-wrap"><table id="activity-table"><thead><tr><th>Date</th><th>Dispatched</th><th>Blocked</th><th>Unknown</th></tr></thead><tbody id="activity-rows"></tbody></table></div>
     </section>
     <section id="health" aria-labelledby="health-title" hidden>
@@ -96,6 +110,6 @@
     <section id="sent" aria-labelledby="sent-title" hidden><h2 id="sent-title">Viber send history</h2><p class="hint">Attempts made by this localhost app. For an unknown outcome, check Viber before trying again.</p><div id="sent-list"></div><button id="sent-more" type="button" hidden>Load more attempts</button></section>
     <section id="inbox" aria-labelledby="inbox-title" hidden><h2 id="inbox-title">Saved conversation snapshots</h2><p class="hint">The latest visible messages you read for each contact. Use Conversation to refresh a snapshot. Viber does not expose a complete inbox or reliable reply classification.</p><div id="inbox-list"></div><button id="inbox-more" type="button" hidden>Load more snapshots</button></section>
   </main>
-  <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Sending requires a verified recipient and your confirmation. Email campaigns and scheduling remain in EmailOutreach.</footer>
+  <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Sending requires a verified recipient and your confirmation. Scheduled messages run while this app is open. Email campaigns remain in EmailOutreach.</footer>
 </body>
 </html>
