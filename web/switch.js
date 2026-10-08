@@ -8,5 +8,5 @@
     trigger.setAttribute('aria-expanded', String(!menu.hidden));
   });
   document.addEventListener('click', event => { if (!event.target.closest('.workspace-picker')) close(); });
-  document.addEventListener('keydown', event => { if (event.key === 'Escape') { close(); trigger.focus(); } });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !menu.hidden) { close(); trigger.focus(); } });
 })();

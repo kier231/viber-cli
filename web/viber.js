@@ -82,7 +82,7 @@
       for (const lead of contacts) { const option = node('option', `#${lead.id} · ${lead.company_name}${lead.viber_name ? ' · ' + lead.viber_name : ''} · ${lead.phone}`); option.value = lead.id; select.append(option); }
       select.value = value;
     }
-    $('status').textContent = `${contacts.length} saved contacts · Viber Desktop · background mode`;
+    $('status').textContent = `${contacts.length} saved contact${contacts.length === 1 ? '' : 's'} · Viber Desktop · background mode`;
     recipientDetail(); renderContacts();
   }
 

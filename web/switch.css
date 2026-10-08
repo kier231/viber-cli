@@ -1,6 +1,6 @@
 .workspace-picker { position: relative; }
 #workspace-switch { padding: 0; border: 0; background: transparent; font: inherit; font-weight: inherit; text-align: left; color: inherit; }
-#workspace-switch span { font-size: 16px; color: #64717e; margin-left: 5px; }
+#workspace-switch span { font-size: 14px; color: #64717e; margin-left: 2px; }
 #workspace-switch:hover { color: #245ec5; }
 #workspace-menu { position: absolute; top: 36px; left: 0; z-index: 20; min-width: 230px; border: 1px solid #bdc6cf; border-radius: 5px; padding: 6px; background: white; box-shadow: 0 8px 24px #1d29371a; }
 #workspace-menu a { display: block; padding: 11px 12px; border-radius: 4px; color: #1d2937; text-decoration: none; font-weight: 600; }
@@ -25,4 +25,4 @@
 .viber-empty { padding: 20px 0; color: #64717e; }
 .viber-pagination { display: flex; gap: 12px; align-items: center; margin-top: 18px; }
 #inspect-tree { max-height: 500px; overflow: auto; font-family: ui-monospace, monospace; font-size: 12px; }
-@media (max-width: 600px) { .contact-actions, .actions { flex-wrap: wrap; } .workspace-picker h1 { font-size: 21px; } #read-current { max-width: 100px; font-size: 13px; } }
+@media (max-width: 600px) { .contact-actions, .actions { flex-wrap: wrap; } #read-current { max-width: 90px; font-size: 13px; } }
