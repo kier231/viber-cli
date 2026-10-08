@@ -145,6 +145,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET":
             if path == "/viber/api/contacts":
                 return self._reply(200, service.contacts())
+            if path == "/viber/api/campaigns":
+                return self._reply(200, service.campaigns.list())
+            if path.startswith("/viber/api/campaigns/"):
+                return self._reply(200, service.campaigns.detail(path.rsplit("/", 1)[1]))
             if path == "/viber/api/status":
                 return self._reply(200, {"pending": service.pending, "contacts": len(service.store.all())})
             if path.startswith("/viber/api/operations/"):
@@ -160,6 +164,14 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._json()
             if path == "/viber/api/contacts":
                 result = service.add_contact(payload)
+            elif path == "/viber/api/campaigns":
+                return self._reply(201, service.campaigns.create(payload))
+            elif path == "/viber/api/campaign-review":
+                return self._reply(200, service.campaigns.review(payload.get("campaign_id")))
+            elif path == "/viber/api/campaign-activate":
+                return self._reply(200, service.campaigns.activate(payload))
+            elif path in {"/viber/api/campaign-pause", "/viber/api/campaign-cancel"}:
+                return self._reply(200, service.campaigns.control(payload.get("campaign_id"), path.rsplit("-", 1)[1]))
             elif path == "/viber/api/name":
                 return self._reply(200, service.set_name(payload.get("lead_id"), payload.get("name")))
             elif path in {"/viber/api/open", "/viber/api/read"}:

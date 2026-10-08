@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+import uuid
 
 from app.web_server import LocalServer
 from app.web_service import WebService
@@ -113,6 +114,26 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertIn(b'workspace-switch', body)
         self.assertIn(b'Email service is offline', body)
+
+    def test_campaign_http_draft_review_activation_and_controls(self):
+        lead = self.server.service.store.create_with_android('+381641234567', 'Business', lambda *_: None)
+        headers = {'Origin': self.origin, 'Content-Type': 'application/json', 'X-Viber-CSRF': self.session()}
+        def post(action, payload, expected=200):
+            status, _, body = self.request('/viber/api/' + action, 'POST', json.dumps(payload), headers)
+            self.assertEqual(status, expected, body)
+            return json.loads(body)
+        draft = post('campaigns', {'request_key': str(uuid.uuid4()), 'name': 'HTTP campaign', 'lead_ids': [lead.id],
+                                  'text': 'Hello {{company}}', 'schedule': {'mode': 'delay', 'minutes': 60}}, 201)
+        self.assertEqual(draft['state'], 'DRAFT')
+        review = post('campaign-review', {'campaign_id': draft['id']})
+        active = post('campaign-activate', {'preview_token': review['token'], 'confirmed': True, 'request_key': str(uuid.uuid4())})
+        self.assertEqual(active['counts'], {'SCHEDULED': 1})
+        self.assertEqual(post('campaign-pause', {'campaign_id': draft['id']})['state'], 'PAUSED')
+        self.assertEqual(post('campaign-cancel', {'campaign_id': draft['id']})['counts'], {'CANCELLED': 1})
+        status, _, body = self.request('/viber/api/campaigns/' + draft['id'], headers=headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['state'], 'CANCELLED')
+        self.assertEqual(self.server.service.pending, 0)
 
 
 if __name__ == "__main__":
