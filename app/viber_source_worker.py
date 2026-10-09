@@ -3,17 +3,20 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
+import time
 
 from app.viber_database import DatabaseReadError, read_snapshot, source_identity, validate_schema
 from app.viber_memory import find_viber_process, iter_keys, KeyDiscoveryError
 
 
 class QtViberSource:
-    def __init__(self):
+    def __init__(self, database_key=None):
         if sys.platform != 'win32':
             raise DatabaseReadError('The live Viber database reader requires Windows.')
         base = Path(os.environ.get('VIBER_CLI_VIBER_DIR', str(Path(os.environ['LOCALAPPDATA']) / 'Viber'))).resolve()
+        self.executable = base / 'Viber.exe'
         profile = os.environ.get('VIBER_CLI_PROFILE')
         paths = ([Path(profile).resolve() / 'viber.db'] if profile else
                  list((Path(os.environ['APPDATA']) / 'ViberPC').glob('*/viber.db')))
@@ -38,8 +41,25 @@ class QtViberSource:
         QCoreApplication.setLibraryPaths([str(base / 'plugins')])
         self.QSqlQuery, self.QSqlDatabase = QSqlQuery, QSqlDatabase
         self.db = None
-        self.viber_process = find_viber_process(base / 'Viber.exe')
-        keys = iter_keys(base / 'Viber.exe')
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                self.viber_process = find_viber_process(self.executable)
+                break
+            except KeyDiscoveryError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.02)
+        def candidate_keys():
+            if database_key is not None:
+                if (not isinstance(database_key, str) or len(database_key) % 2
+                        or not re.fullmatch(r'[0-9a-f]{16,512}', database_key)):
+                    raise KeyDiscoveryError('The VM database key was invalid.')
+                yield database_key
+            else:
+                yield from iter_keys(self.executable)
+
+        keys = candidate_keys()
         try:
             for key in keys:
                 connection = QSqlDatabase.addDatabase('QSQLITE', 'viber-reader')
@@ -87,7 +107,7 @@ class QtViberSource:
 
     def read(self, request):
         if not self.viber_process.is_running():
-            raise DatabaseReadError('Viber stopped or restarted. The reader will reconnect when Viber is running.')
+            self.viber_process = find_viber_process(self.executable)
         if source_identity(self.path) != self.identity:
             raise DatabaseReadError('Viber profile was replaced. Restart the reader to create a new baseline.')
         version = (self.query('PRAGMA data_version')[0]['data_version'], tuple(sorted(request['phones'])))
@@ -120,13 +140,14 @@ def main():
             if request.get('action') == 'close':
                 break
             if source is None:
-                source = QtViberSource()
+                source = QtViberSource(request.pop('_database_key', None))
             result = source.read(request)
             response = {'ok': True, 'result': result}
         except (DatabaseReadError, KeyDiscoveryError) as exc:
             response = {'ok': False, 'error': str(exc)}
-        except Exception:
-            response = {'ok': False, 'error': 'Viber database reader failed. Detection is paused.'}
+        except Exception as exc:
+            response = {'ok': False,
+                        'error': f'Viber database reader failed ({type(exc).__name__}). Detection is paused.'}
         print(json.dumps(response, ensure_ascii=True), flush=True)
     if source:
         source.close()

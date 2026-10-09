@@ -12,7 +12,8 @@ from app.viber_inbox import InboxStore, utc_now
 
 
 class WorkerSource:
-    def __init__(self):
+    def __init__(self, database_key=None):
+        self.database_key = database_key
         self.process = subprocess.Popen(
             [sys.executable, '-u', '-m', 'app.viber_source_worker'],
             cwd=Path(__file__).resolve().parent.parent,
@@ -36,13 +37,17 @@ class WorkerSource:
 
     def read(self, request):
         try:
-            self.process.stdin.write(json.dumps(request) + '\n')
+            payload = dict(request)
+            if self.database_key is not None:
+                payload['_database_key'] = self.database_key
+            self.process.stdin.write(json.dumps(payload) + '\n')
             self.process.stdin.flush()
             response = self.responses.get(timeout=40)
         except (BrokenPipeError, OSError, queue.Empty):
             raise DatabaseReadError('Viber database worker is unavailable. Detection is paused.') from None
         if not response.get('ok'):
             raise DatabaseReadError(response.get('error', 'Viber database read failed.'))
+        self.database_key = None
         return response['result']
 
     def close(self):

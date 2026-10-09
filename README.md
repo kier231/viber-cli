@@ -128,6 +128,17 @@ passed on the command line. The reader does not activate, restore, pause, or
 type into Viber and does not need its window visible. Viber must be running
 and logged in. Sending still has the desktop-window requirements above.
 
+The dedicated `ViberWorker` VM starts Viber under a local startup capture so a
+fresh profile can provide its database key before Viber discards the SQL text.
+The capture remains attached inside the VM, never writes the key to disk, and
+passes it only to the private read-only database subprocess. Install the VM
+dependencies with `requirements-vm.txt`; the normal host uses
+`requirements.txt`.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-vm.txt
+```
+
 Install the updated `requirements.txt` before starting the server. The tested
 Windows Viber build uses the Qt 6.11 ABI series; `PySide6-Essentials==6.11.2`
 provides the isolated SQL bindings. A Qt version mismatch, unreadable key,

@@ -1,0 +1,2 @@
+-r requirements.txt
+frida>=17.5,<18

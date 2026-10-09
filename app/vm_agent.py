@@ -8,8 +8,10 @@ import json
 import os
 import secrets
 import threading
+from pathlib import Path
 
 from app.viber_background import BackgroundViberClient
+from app.viber_key_capture import start_viber_and_capture_key
 from app.viber_watcher import WorkerSource
 
 
@@ -17,7 +19,9 @@ class Agent:
     def __init__(self):
         self.desktop = None
         self.desktop_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viber-ui")
-        self.source = WorkerSource()
+        viber = Path(os.environ['LOCALAPPDATA']) / 'Viber' / 'Viber.exe'
+        self.database_key, self.capture_session = start_viber_and_capture_key(viber)
+        self.source = WorkerSource(self.database_key)
         self.source_lock = threading.Lock()
         self.draft = None
 
@@ -61,7 +65,12 @@ class Agent:
 
     def read(self, payload):
         with self.source_lock:
-            return self.source.read(payload)
+            try:
+                return self.source.read(payload)
+            except Exception:
+                self.source.close()
+                self.source = WorkerSource(self.database_key)
+                raise
 
 
 def serve(host="0.0.0.0", port=4011):
