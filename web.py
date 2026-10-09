@@ -7,6 +7,7 @@ import sys
 
 from app.web_server import LocalServer
 from app.web_service import WebService
+from app.vm_bridge import load_vm_config, VmBridge, VmViberClient, VmWorkerSource
 
 
 def lock_database(path):
@@ -45,7 +46,14 @@ def main():
         database_lock = lock_database(args.db)
     except ValueError as exc:
         parser.exit(1, f"{exc}\n")
-    service = WebService(args.db)
+    vm_config = load_vm_config()
+    if vm_config:
+        bridge = VmBridge(vm_config)
+        service = WebService(args.db,
+                             client_factory=lambda: VmViberClient(bridge),
+                             source_factory=lambda: VmWorkerSource(bridge))
+    else:
+        service = WebService(args.db)
     try:
         server = LocalServer(args.port, args.email_port, service)
     except OSError as exc:
@@ -57,7 +65,10 @@ def main():
     service.replies.start()
     print(f"Outreach app: http://127.0.0.1:{args.port}/", flush=True)
     print("Click the title to switch between EmailOutreach and ViberOutreach.", flush=True)
-    print("Keep the email service running. Keep Viber restored behind your other windows.", flush=True)
+    if vm_config:
+        print("Viber runs in the dedicated ViberWorker virtual machine.", flush=True)
+    else:
+        print("Keep the email service running. Keep Viber restored behind your other windows.", flush=True)
     try:
         server.serve_forever(poll_interval=.5)
     except KeyboardInterrupt:

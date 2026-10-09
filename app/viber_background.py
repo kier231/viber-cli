@@ -37,6 +37,7 @@ class BackgroundViberClient:
         self.ui = ViberClient(debug=debug)
         self.window = None
         self.expected_name: str | None = None
+        self.prepared = None
 
     def connect(self):
         if _USER32 is None:
@@ -228,7 +229,10 @@ class BackgroundViberClient:
             self._post(_WM_KEYUP, _VK_BACK)
         time.sleep(.15)
 
-    def send_message(self, text: str, before_dispatch=None, on_dispatch=None, dispatch_lock=None) -> None:
+    def prepare_message(self, text: str) -> None:
+        """Type and verify a draft without pressing Send."""
+        if self.prepared is not None:
+            raise ViberError("Another verified draft is already waiting to be sent.")
         if not text or not text.strip() or "\n" in text or "\r" in text:
             raise ViberError("Send one nonempty line at a time.")
         if any(ord(char) < 32 or ord(char) > 0xFFFF for char in text):
@@ -254,20 +258,40 @@ class BackgroundViberClient:
         if not send.is_enabled():
             raise ViberError("Viber send button is unavailable; draft remains unsent.")
         self._assert_no_focus_theft()
+        self.prepared = (self.expected_name, text, composer, send, len(units) // 2)
+
+    def cancel_prepared(self) -> None:
+        if self.prepared is None:
+            return
+        expected, text, composer, _send, length = self.prepared
+        self.prepared = None
+        if self.verify_current_name(expected) and composer.get_value() == text:
+            self._erase_draft(length)
+
+    def dispatch_prepared(self) -> None:
+        if self.prepared is None:
+            raise ViberError("No verified draft is waiting to be sent.")
+        expected, text, composer, send, length = self.prepared
+        if not self.verify_current_name(expected) or composer.get_value() != text:
+            if self.verify_current_name(expected) and composer.get_value() == text:
+                self._erase_draft(length)
+            self.prepared = None
+            raise ViberError("Conversation or draft changed before dispatch.")
+        self._click(send)
+        time.sleep(.3)
+        if composer.get_value():
+            raise ViberError("Viber did not clear the draft; delivery is unverified.")
+        self.prepared = None
+
+    def send_message(self, text: str, before_dispatch=None, on_dispatch=None, dispatch_lock=None) -> None:
+        self.prepare_message(text)
         try:
             if before_dispatch:
                 before_dispatch()
             with dispatch_lock if dispatch_lock is not None else nullcontext():
-                if not self.verify_current_name(self.expected_name) or composer.get_value() != text:
-                    raise ViberError("Conversation or draft changed before dispatch.")
                 if on_dispatch:
                     on_dispatch()
-                self._click(send)
+                self.dispatch_prepared()
         except Exception:
-            # Erase only our own unchanged draft in the verified chat.
-            if self.verify_current_name(self.expected_name) and composer.get_value() == text:
-                self._erase_draft(len(units) // 2)
+            self.cancel_prepared()
             raise
-        time.sleep(.3)
-        if composer.get_value():
-            raise ViberError("Viber did not clear the draft; delivery is unverified.")
