@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 import uuid
+from unittest.mock import patch
 
 from app.web_server import LocalServer
 from app.web_service import WebService
@@ -152,6 +153,24 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)['state'], 'CANCELLED')
         self.assertEqual(self.server.service.pending, 0)
+
+    def test_reply_controls_require_session_and_report_persisted_settings(self):
+        self.assertEqual(self.request('/viber/api/replies')[0],403)
+        headers = {'Origin':self.origin,'Content-Type':'application/json','X-Viber-CSRF':self.session()}
+        status, _, body = self.request('/viber/api/replies',headers=headers)
+        self.assertEqual(status,200)
+        self.assertFalse(json.loads(body)['settings']['enabled'])
+        with patch.object(self.server.service.replies.generator,'check_login',return_value={'ready':True}):
+            status, _, body = self.request('/viber/api/replies','POST',json.dumps({'enabled':True,'instructions':'Use brief replies.'}),headers)
+        self.assertEqual(status,200)
+        self.assertTrue(json.loads(body)['enabled'])
+        status, _, body = self.request('/viber/api/database/status',headers=headers)
+        self.assertTrue(json.loads(body)['automatic_replies'])
+        status, _, body = self.request('/viber/api/replies','POST',json.dumps({'enabled':'true','instructions':'Hi'}),headers)
+        self.assertEqual(status,400)
+        status, _, body = self.request('/viber/api/replies','POST',json.dumps({'enabled':False,'instructions':'Use brief replies.'}),headers)
+        self.assertFalse(json.loads(body)['enabled'])
+        self.assertEqual(self.server.service.pending,0)
 
 
 if __name__ == "__main__":

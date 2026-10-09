@@ -62,6 +62,7 @@ input:read-only, textarea:read-only { background: #f6f7f8; } textarea { resize: 
 .schedule-sent > summary, .message-row.schedule-sent strong { text-decoration: line-through; color: #718096; }
 .schedule-sent > summary::after, .message-row.schedule-sent strong::after { content: " ✓"; text-decoration: none; display: inline-block; color: #2f7a45; }
 .actions { margin-top: 17px; } .message-row { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid #e2e6eb; border-radius: 0; padding: 15px 5px; }
+#reply-form button { margin-top: 12px; }
 .message-row strong, .message-row span { display: block; overflow-wrap: anywhere; } .message-row span { margin-top: 5px; color: #586675; font-size: 13px; }
 #more, #thread-more, #cancel-scheduled, #contact-more { margin-top: 18px; } #detail-title { margin-top: 20px; overflow-wrap: anywhere; }
 #detail-meta { white-space: pre-line; overflow-wrap: anywhere; color: #586675; }

@@ -153,10 +153,45 @@ WAL changes. Full retained history for matched contacts is reconciled whenever
 the database changes, including old edits and deletions. The message ledger
 and checkpoints commit together in `leads.sqlite3`; restarts resume detection
 without reimporting messages as new. Conversation revisions change on new,
-edited, deleted, or manually sent messages, providing a context check for a
-future reply worker. This release only records messages: **no Codex calls or
-automatic replies are enabled**. Existing authorized campaigns and schedules
-continue to work independently.
+edited, deleted, or manually sent messages. The automatic reply worker checks
+this revision after generation and again immediately before Send. Existing
+authorized campaigns and schedules continue to work independently.
+
+### Codex automatic replies
+
+In **Inbox**, enable **Codex automatic replies** and edit the reply instructions
+and business facts. This uses the installed Codex CLI and its existing **ChatGPT
+sign-in**, without API keys. New installations default to off; your saved
+setting persists across restarts. The local server and Viber must stay running.
+Sending requires Viber restored behind another application, as for manual sends.
+No mouse, keyboard, clipboard or foreground activation is used.
+
+Only future verified incoming text in monitored, allowed personal chats can
+trigger a reply. Enabling or resuming a chat skips the existing backlog. A short
+message burst is grouped into one incoming turn. The model sees all retained
+incoming and outgoing correspondence, not just the current UI page. Very large
+histories (over 120,000 serialized characters) are held rather than truncated.
+Messages are untrusted context; owner instructions are supplied separately.
+The CLI runs in an ephemeral, read-only session with shell, apps, MCP, plugins,
+hooks, web search and computer tools disabled. It returns structured reply/hold
+output. Conversation context is sent to Codex using your ChatGPT account and
+counts against that account's usage limits. See [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode).
+
+The default instructions use brief, neutral replies in the other person's
+language. Missing business facts, opt-outs, unsupported content and commitments
+are held for review. Add your actual offer and facts to the editable instructions.
+Model decisions are not guaranteed; review **Recent automatic replies and held
+turns**. Manual answers, edits, deletions, changed recipients, instruction changes
+and paused controls invalidate drafts. Automatic sends share the existing
+serialized Desktop worker and Sent ledger.
+
+Each incoming event is claimed durably once. Failed or held turns are not
+automatically retried. A crash during dispatch or an uncertain send pauses that
+chat; check Viber and Sent before using **Resume future replies (reviewed)**.
+Dispatch means the Send action was issued, not proof of delivery. A final database
+refresh and header/draft check reduce races, but Viber does not offer an atomic
+compare-and-send transaction with its database; changes in the instant of Send
+cannot be ruled out. Use global or per-chat pause whenever you want manual control.
 
 The added local tables are `viber_sources`, `viber_conversations`, and
 `viber_messages`. They contain private conversation history and are covered by

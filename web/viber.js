@@ -23,6 +23,7 @@
   let schedulesLoading = false;
   let databaseLoading = false, databaseOffset = 0, databaseSignature = null;
   let databaseChat = null, databaseOlder = null, databaseRevision = null;
+  let replySettings = null, replyInstructionsDirty = false;
   let pending = null;
   try { pending = JSON.parse(localStorage.getItem(pendingKey) || 'null'); }
   catch { showError(new Error('The saved send attempt cannot be read. Check Sent before sending another message.')); }
@@ -254,17 +255,46 @@
     for (const day of days) { const row = node('tr'); row.append(node('th', day.date), node('td', day.dispatched), node('td', day.blocked), node('td', day.unknown)); $('activity-rows').append(row); }
   }
 
+  function renderReplies(result) {
+    replySettings = result.settings;
+    $('reply-status').textContent = `Automatic replies ${replySettings.enabled ? 'ON' : 'OFF'} · ${replySettings.state.replaceAll('_', ' ').toLowerCase()} · ChatGPT sign-in` + (replySettings.error ? ' · ' + replySettings.error : '');
+    $('reply-toggle').textContent = replySettings.enabled ? 'Pause automatic replies' : 'Enable automatic replies';
+    $('reply-toggle').disabled = busy;
+    if (!replyInstructionsDirty && document.activeElement !== $('reply-instructions')) $('reply-instructions').value = replySettings.instructions;
+    $('reply-jobs').replaceChildren();
+    if (!result.jobs.length) $('reply-jobs').append(node('p', 'No automatic reply attempts yet. Waiting for a new incoming message.', 'hint'));
+    for (const job of result.jobs) {
+      const card = node('article', null, 'viber-record');
+      card.append(node('strong', `${job.phone} · ${job.state}`), node('p', date(job.updated_at), 'hint'));
+      if (job.text) card.append(node('pre', job.text));
+      if (job.reason) card.append(node('p', job.reason));
+      if (job.state === 'UNKNOWN') card.append(node('p', 'Check Viber and Sent before resuming this chat. This turn will not be retried automatically.', 'warning'));
+      $('reply-jobs').append(card);
+    }
+    if (databaseChat) $('database-meta').textContent = databaseChat.phone + ' · Retained Viber Desktop history · Automatic replies ' + (replySettings.enabled && databaseChat.reply_enabled && databaseChat.monitoring ? 'on' : 'off');
+  }
+
+  async function saveReplies(enabled, instructions) {
+    $('reply-toggle').disabled = true;
+    try {
+      await api('replies', {enabled, instructions});
+      replyInstructionsDirty = false;
+      await loadDatabaseInbox();
+    } finally { $('reply-toggle').disabled = busy; }
+  }
+
   async function loadDatabaseInbox(more = false) {
     if (databaseLoading) return;
     databaseLoading = true;
     try {
       if (!more) { if (databaseOffset > 50) databaseSignature = null; databaseOffset = 0; }
-      const [status, records] = await Promise.all([api('database/status'), api('database/conversations?offset=' + databaseOffset)]);
+      const [status, records, replies] = await Promise.all([api('database/status'), api('database/conversations?offset=' + databaseOffset), api('replies')]);
+      renderReplies(replies);
       const watching = status.state === 'WATCHING';
       $('database-status').className = 'health-card ' + (watching ? 'health-healthy' : 'health-unhealthy');
       $('database-status').replaceChildren(node('strong', watching ? 'Watching for incoming messages' : status.state === 'CONNECTING' ? 'Connecting to Viber’s database…' : 'Message detection paused'),
         node('p', `${status.conversations} conversation${status.conversations === 1 ? '' : 's'} · ${status.messages} saved messages · ${status.new_incoming} incoming text message${status.new_incoming === 1 ? '' : 's'} detected since baseline`),
-        node('p', `Last checked: ${date(status.last_poll)} · Automatic replies off`, 'hint'));
+        node('p', `Last checked: ${date(status.last_poll)} · Automatic replies ${replySettings.enabled ? 'on' : 'off'}`, 'hint'));
       if (status.error) $('database-status').append(node('p', status.error, 'warning'));
       const signature = JSON.stringify(records);
       if (more || signature !== databaseSignature) {
@@ -274,15 +304,22 @@
           : 'Conversation history will appear after the watcher connects.', 'viber-empty'));
         for (const chat of records) {
           const card = node('div', null, 'viber-record'), heading = node('h3', chat.company_name + ' · ' + chat.viber_name);
-          card.append(heading, node('p', `${chat.phone} · ${chat.monitoring ? 'Detection on' : 'Detection paused'} · ${chat.new_incoming} new incoming text message${chat.new_incoming === 1 ? '' : 's'}`, 'hint'));
+          card.append(heading, node('p', `${chat.phone} · ${chat.monitoring ? 'Detection on' : 'Detection paused'} · Replies ${chat.reply_enabled ? 'allowed' : 'paused'} · ${chat.new_incoming} incoming text message${chat.new_incoming === 1 ? '' : 's'} detected`, 'hint'));
           const actions = node('div', null, 'actions');
           actions.append(contactButton('View history', () => openDatabaseConversation(chat)),
             contactButton(chat.monitoring ? 'Pause detection' : 'Monitor replies', async () => {
               await api('database/monitor', {source_id: chat.source_id, chat_id: chat.chat_id, enabled: !chat.monitoring});
               databaseSignature = null; await loadDatabaseInbox();
+            }), contactButton(chat.reply_enabled ? 'Pause replies for this chat' : 'Resume future replies (reviewed)', async () => {
+              await api('replies/conversation', {source_id: chat.source_id, chat_id: chat.chat_id, enabled: !chat.reply_enabled});
+              databaseSignature = null; await loadDatabaseInbox();
             }));
           card.append(actions); $('database-list').append(card);
-          if (databaseChat && chat.source_id === databaseChat.source_id && chat.chat_id === databaseChat.chat_id && chat.revision !== databaseRevision) $('database-updated').hidden = false;
+          if (databaseChat && chat.source_id === databaseChat.source_id && chat.chat_id === databaseChat.chat_id) {
+            if (chat.revision !== databaseRevision) $('database-updated').hidden = false;
+            databaseChat = chat;
+            $('database-meta').textContent = chat.phone + ' · Retained Viber Desktop history · Automatic replies ' + (replySettings.enabled && chat.reply_enabled && chat.monitoring ? 'on' : 'off');
+          }
         }
         if (!more) databaseSignature = signature;
       }
@@ -298,7 +335,7 @@
     databaseChat = chat; databaseOlder = result.older_before; databaseRevision = result.conversation.revision;
     $('database-conversation').hidden = false; $('database-updated').hidden = true;
     $('database-title').textContent = chat.company_name + ' · ' + chat.viber_name;
-    $('database-meta').textContent = chat.phone + ' · Retained Viber Desktop history · Automatic replies off';
+    $('database-meta').textContent = chat.phone + ' · Retained Viber Desktop history · Automatic replies ' + (replySettings?.enabled && chat.reply_enabled && chat.monitoring ? 'on' : 'off');
     $('database-compose').hidden = !chat.leads?.length;
     $('database-older').hidden = databaseOlder == null;
     if (!older) $('database-messages').replaceChildren();
@@ -575,6 +612,9 @@
   for (const kind of ['sent', 'events', 'inbox', 'scheduled']) $(kind === 'events' ? 'event-more' : kind + '-more').addEventListener('click', action(() => loadRecords(kind, true)));
   $('refresh').addEventListener('click', action(async () => { await loadContacts(); if (view === 'health') await checkHealth(); else await navigate(view); }));
   $('database-refresh').addEventListener('click', action(() => loadDatabaseInbox()));
+  $('reply-instructions').addEventListener('input', () => { replyInstructionsDirty = true; });
+  $('reply-form').addEventListener('submit', action(() => saveReplies(replySettings.enabled, $('reply-instructions').value)));
+  $('reply-toggle').addEventListener('click', action(() => saveReplies(!replySettings.enabled, replySettings.instructions)));
   $('database-more').addEventListener('click', action(() => loadDatabaseInbox(true)));
   $('database-older').addEventListener('click', action(() => openDatabaseConversation(databaseChat, true)));
   $('database-history-refresh').addEventListener('click', action(() => openDatabaseConversation(databaseChat)));

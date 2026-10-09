@@ -151,8 +151,21 @@
     <section id="sent" aria-labelledby="sent-title" hidden><h2 id="sent-title">Viber send history</h2><p class="hint">Attempts made by this localhost app. For an unknown outcome, check Viber before trying again.</p><div id="sent-list"></div><button id="sent-more" type="button" hidden>Load more attempts</button></section>
     <section id="inbox" aria-labelledby="inbox-title" hidden>
       <h2 id="inbox-title">Viber inbox</h2>
-      <p class="hint">Messages from personal chats matched to your saved phone numbers. Incoming and outgoing are identified from Viber's database. Detection runs in the background; automatic replies are off.</p>
+      <p class="hint">Messages from personal chats matched to your saved phone numbers. Incoming and outgoing are identified from Viber's database. Detection and replies run in the background.</p>
       <div id="database-status" class="health-card" role="status" aria-live="polite">Checking the message watcher…</div>
+      <section class="viber-record" aria-labelledby="reply-title">
+        <h3 id="reply-title">Codex automatic replies</h3>
+        <p id="reply-status" role="status" aria-live="polite">Checking automatic replies…</p>
+        <p class="hint">Uses your ChatGPT sign-in, with no API key. Replies to future incoming text in monitored chats using all retained conversation history. Keep this server running and Viber restored behind another window. Old messages are not replayed when you enable replies.</p>
+        <div class="actions"><button id="reply-toggle" type="button" disabled>Checking…</button></div>
+        <form id="reply-form">
+          <label for="reply-instructions">Reply instructions and business facts</label>
+          <textarea id="reply-instructions" rows="5" maxlength="8000" required></textarea>
+          <button type="submit">Save instructions</button>
+        </form>
+        <p class="hint">Codex waits briefly for a message burst, checks the recipient and checks for new messages before Send. Missing facts and uncertain sends are held for review. Automatic replies do not need individual confirmation.</p>
+        <details><summary>Recent automatic replies and held turns</summary><div id="reply-jobs"></div></details>
+      </section>
       <div class="actions"><button id="database-refresh" type="button">Refresh inbox</button></div>
       <div id="database-list"></div><button id="database-more" type="button" hidden>Load more conversations</button>
       <section id="database-conversation" class="database-conversation" aria-labelledby="database-title" hidden>
@@ -164,6 +177,6 @@
       <details class="viber-record"><summary>Saved visible chat snapshots</summary><p class="hint">Earlier captures made through Conversation. These snapshots are separate from the database history above.</p><div id="inbox-list"></div><button id="inbox-more" type="button" hidden>Load more snapshots</button></details>
     </section>
   </main>
-  <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Sending requires a verified recipient and your confirmation. Scheduled messages and campaigns run while the local server is running. Email campaigns remain in EmailOutreach.</footer>
+  <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Manual sends require confirmation; enabled automatic replies use your saved instructions. The server must stay running for scheduled messages, campaigns and replies. Email campaigns remain in EmailOutreach.</footer>
 </body>
 </html>
