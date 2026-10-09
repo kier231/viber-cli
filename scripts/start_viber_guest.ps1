@@ -4,6 +4,7 @@ $stateDir = Join-Path $env:LOCALAPPDATA 'viber-cli'
 $tokenPath = Join-Path $stateDir 'vm-token.txt'
 $python = Join-Path $root '.venv\Scripts\pythonw.exe'
 $viber = Join-Path $env:LOCALAPPDATA 'Viber\Viber.exe'
+$tesseract = 'C:\Program Files\Tesseract-OCR'
 if (-not (Test-Path -LiteralPath $tokenPath)) { throw 'The VM bridge token is missing.' }
 if (-not (Test-Path -LiteralPath $python)) { throw 'The VM Python environment is missing.' }
 if (-not (Get-Process Viber -ErrorAction SilentlyContinue)) {
@@ -31,6 +32,8 @@ public static class ViberWindow {
 [ViberWindow]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
 $env:VIBER_CLI_VM_TOKEN = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
 $env:VIBER_CLI_VM_PORT = '4011'
+$env:PATH = "$tesseract;$env:PATH"
+$env:TESSDATA_PREFIX = Join-Path $stateDir 'tessdata'
 Set-Location -LiteralPath $root
 & $python -m app.vm_agent
 
