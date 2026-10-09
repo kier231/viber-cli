@@ -74,19 +74,44 @@ class BackgroundViberClient:
 
     def _click(self, node, hold: float = 0) -> None:
         rect = node.rectangle()
-        window = self.window.rectangle()
-        x = (rect.left + rect.right) // 2 - window.left
-        y = (rect.top + rect.bottom) // 2 - window.top
-        if not (0 <= x < window.width() and 0 <= y < window.height()):
+        point = wintypes.POINT((rect.left + rect.right) // 2,
+                               (rect.top + rect.bottom) // 2)
+        if not _USER32.ScreenToClient(self.window.handle, ctypes.byref(point)):
+            raise ViberError("Windows could not map the Viber control to its client area.")
+        client = wintypes.RECT()
+        if not _USER32.GetClientRect(self.window.handle, ctypes.byref(client)):
+            raise ViberError("Windows could not read the Viber client area.")
+        x, y = point.x, point.y
+        if not (client.left <= x < client.right and client.top <= y < client.bottom):
             raise ViberError("Viber control is outside the main window.")
-        point = (y << 16) | x
-        self._post(_WM_MOUSEMOVE, 0, point)
-        self._post(_WM_LBUTTONDOWN, 1, point)
+        packed_point = ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+        self._post(_WM_MOUSEMOVE, 0, packed_point)
+        self._post(_WM_LBUTTONDOWN, 1, packed_point)
         if hold:
             time.sleep(hold)
-        self._post(_WM_LBUTTONUP, 0, point)
+        self._post(_WM_LBUTTONUP, 0, packed_point)
         time.sleep(.07)
         self._assert_no_focus_theft()
+
+    def _dismiss_obscuring_info_popup(self) -> None:
+        """Close a stale contact/group info sheet before opening the dial pad."""
+        nodes = self._nodes()
+        if not any("InfoPopup" in self.ui._auto_id(node) for node in nodes):
+            return
+        closes = [node for node in nodes
+                  if self.ui._type(node) == "Button" and
+                  re.search(r"InfoPopup\.IconButton_", self.ui._auto_id(node)) and
+                  "SideBarContent" not in self.ui._auto_id(node)]
+        if len(closes) != 1:
+            raise ViberError(
+                "Viber has an open info panel that could not be closed safely. No message was sent.")
+        self._click(closes[0])
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if not any("InfoPopup" in self.ui._auto_id(node) for node in self._nodes()):
+                return
+            time.sleep(.1)
+        raise ViberError("Viber's open info panel did not close. No message was sent.")
 
     def _capture_header(self):
         if _USER32.IsIconic(self.window.handle):
@@ -154,6 +179,7 @@ class BackgroundViberClient:
     def _dial(self, phone: str) -> None:
         if not re.fullmatch(r"\+\d{7,15}", phone):
             raise ViberError("A full international phone number is required.")
+        self._dismiss_obscuring_info_popup()
         profile = self._one("profile button", lambda n:
                             self.ui._type(n) == "CheckBox" and
                             "ProfileButton_" in self.ui._auto_id(n))
