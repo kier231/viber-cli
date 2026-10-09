@@ -120,6 +120,13 @@ class AutoReplies:
                                            (phone, exclude or ''))]
         return hashlib.sha256(json.dumps(rows).encode()).hexdigest()
 
+    @staticmethod
+    def _has_prior_outreach(db, phone, incoming_ms):
+        return db.execute('''SELECT 1 FROM web_sends s
+            WHERE s.phone=? AND s.state='DISPATCHED' AND s.request_key NOT LIKE 'auto:%'
+            AND CAST((julianday(COALESCE(s.attempted_at,s.updated_at,s.created_at)) - 2440587.5)
+                     * 86400000 AS INTEGER)<=? LIMIT 1''', (phone, incoming_ms)).fetchone() is not None
+
     def _claim(self):
         with closing(self.inbox.connect()) as db, db:
             db.execute('BEGIN IMMEDIATE')
@@ -131,6 +138,10 @@ class AutoReplies:
                 WHERE c.active=1 AND c.monitoring=1 AND c.reply_enabled=1
                 AND m.detection='NEW_INCOMING' AND m.deleted=0 AND m.sender_verified=1 AND m.direction='INCOMING'
                 AND m.rowid>MAX(?,c.reply_since_rowid) AND m.timestamp_ms>=?
+                AND EXISTS(SELECT 1 FROM web_sends s WHERE s.phone=c.phone AND s.state='DISPATCHED'
+                  AND s.request_key NOT LIKE 'auto:%'
+                  AND CAST((julianday(COALESCE(s.attempted_at,s.updated_at,s.created_at)) - 2440587.5)
+                           * 86400000 AS INTEGER)<=m.timestamp_ms)
                 AND NOT EXISTS(SELECT 1 FROM auto_reply_events e WHERE e.source_id=m.source_id AND e.event_id=m.event_id)
                 ORDER BY m.timestamp_ms,COALESCE(m.sort_order,0),m.event_id''', (settings['since_rowid'], settings['since_ms'])).fetchall()
             if not candidates:
@@ -190,6 +201,10 @@ class AutoReplies:
                 raise ValueError('Conversation changed or replies paused. This draft was cancelled.')
             if chat['phone'] != job['phone']:
                 raise ValueError('Conversation phone changed. No message sent.')
+            trigger = db.execute('SELECT timestamp_ms FROM viber_messages WHERE source_id=? AND event_id=?',
+                                 (job['source_id'], job['trigger_id'])).fetchone()
+            if not trigger or not self._has_prior_outreach(db, job['phone'], trigger['timestamp_ms']):
+                raise ValueError('This contact was not messaged by the app before replying. No message sent.')
             lead = db.execute('SELECT * FROM leads WHERE id=?', (json.loads(job['lead_snapshot'])['id'],)).fetchone()
             if not lead or dict(lead) != json.loads(job['lead_snapshot']):
                 raise ValueError('Saved contact changed. No message sent.')

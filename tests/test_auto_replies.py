@@ -1,4 +1,5 @@
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 import time
@@ -78,6 +79,13 @@ class AutoReplyTests(unittest.TestCase):
         self.service.replies.close()
         self.replies = self.service.replies = AutoReplies(self.service, self.generator, settle_seconds=0)
         self.first = message(1, 'OUTGOING', body='Hello', timestamp_ms=int(time.time()*1000)-10000)
+        outreach_at = datetime.fromtimestamp((self.first['timestamp_ms'] - 1000) / 1000, timezone.utc).isoformat()
+        with closing(self.service.store._connect()) as db, db:
+            db.execute("""INSERT INTO web_sends(id,request_key,preview_hash,operation_id,lead_id,phone,
+                company_name,viber_name,text,state,created_at,updated_at,error,attempted_at)
+                VALUES('initial-outreach','manual:initial','hash','operation',?,?,?,?,?,'DISPATCHED',?,?,NULL,?)""",
+                       (self.lead.id, self.lead.phone, self.lead.company_name, 'Person', 'Hello',
+                        outreach_at, outreach_at, outreach_at))
         self.source = Source(snapshot(self.first))
         self.service.watcher.source = self.source
         self.service.watcher.poll_once()
@@ -119,6 +127,30 @@ class AutoReplyTests(unittest.TestCase):
 
     def test_outgoing_never_generates_reply(self):
         self.incoming(message(2,'OUTGOING'))
+        self.run_reply()
+        self.assertEqual(self.generator.contexts, [])
+
+    def test_regular_contact_without_app_outreach_is_ignored(self):
+        with closing(self.replies.inbox.connect()) as db, db:
+            db.execute('DELETE FROM web_sends')
+        self.incoming(message(2))
+        self.run_reply()
+        self.assertEqual(self.generator.contexts, [])
+        self.assertEqual(self.replies.jobs(), [])
+
+    def test_automatic_reply_alone_does_not_make_contact_eligible(self):
+        with closing(self.replies.inbox.connect()) as db, db:
+            db.execute("UPDATE web_sends SET request_key='auto:old'")
+        self.incoming(message(2))
+        self.run_reply()
+        self.assertEqual(self.generator.contexts, [])
+
+    def test_app_outreach_after_incoming_does_not_replay_old_message(self):
+        with closing(self.replies.inbox.connect()) as db, db:
+            future = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+            db.execute('UPDATE web_sends SET created_at=?,updated_at=?,attempted_at=?',
+                       (future, future, future))
+        self.incoming(message(2))
         self.run_reply()
         self.assertEqual(self.generator.contexts, [])
 

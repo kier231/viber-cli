@@ -177,9 +177,11 @@ setting persists across restarts. The local server and Viber must stay running.
 Sending requires Viber restored behind another application, as for manual sends.
 No mouse, keyboard, clipboard or foreground activation is used.
 
-Only future verified incoming text in monitored, allowed personal chats can
-trigger a reply. Enabling or resuming a chat skips the existing backlog. A short
-message burst is grouped into one incoming turn. The model sees all retained
+Only future verified incoming text from a phone previously messaged through
+this app can trigger a reply. Manual Viber conversations, regular contacts and
+scheduled messages that have not been dispatched are ineligible. Enabling or
+resuming a chat skips the existing backlog. A short message burst is grouped
+into one incoming turn. The model sees all retained
 incoming and outgoing correspondence, not just the current UI page. Very large
 histories (over 120,000 serialized characters) are held rather than truncated.
 Messages are untrusted context; owner instructions are supplied separately.
