@@ -63,6 +63,7 @@ class InboxStore:
             return {'imported': 0, 'new_incoming': 0, 'updated': 0}
         source = snapshot['source_id']
         stamp = utc_now()
+        now_ms = int(time.time() * 1000)
         counts = {'imported': 0, 'new_incoming': 0, 'updated': 0}
         with closing(self.connect()) as db, db:
             db.execute('BEGIN IMMEDIATE')
@@ -73,6 +74,7 @@ class InboxStore:
             # their history without mixing identities or reusing checkpoints.
             old_chats = {row['chat_id']: row for row in db.execute(
                 'SELECT * FROM viber_conversations WHERE source_id=?', (source,))}
+            recent_outreach = self._recent_outreach_cutoffs(db, now_ms)
             db.execute('UPDATE viber_conversations SET active=0')
             chats = {chat['chat_id']: chat for chat in snapshot['chats']}
             for chat in chats.values():
@@ -82,10 +84,10 @@ class InboxStore:
                 db.execute('''INSERT INTO viber_conversations(source_id,chat_id,peer_id,phone,viber_name,monitor_since_ms)
                     VALUES(?,?,?,?,?,?) ON CONFLICT(source_id,chat_id) DO UPDATE
                     SET viber_name=excluded.viber_name,active=1''',
-                           (source, chat['chat_id'], chat['peer_id'], chat['phone'], chat['viber_name'], int(time.time() * 1000)))
+                           (source, chat['chat_id'], chat['peer_id'], chat['phone'], chat['viber_name'], now_ms))
                 if old and not old['active']:
                     db.execute('UPDATE viber_conversations SET monitor_since_ms=? WHERE source_id=? AND chat_id=?',
-                               (int(time.time() * 1000), source, chat['chat_id']))
+                               (now_ms, source, chat['chat_id']))
             existing = {row['event_id']: row for row in db.execute(
                 'SELECT * FROM viber_messages WHERE source_id=?', (source,))}
             seen, revised = set(), set()
@@ -108,6 +110,15 @@ class InboxStore:
                     detection = 'EDITED'
                     counts['updated'] += 1
                 else:
+                    cutoff = recent_outreach.get(chats[chat_id]['phone'])
+                    if (baseline and cutoff is not None and
+                            cutoff <= message['timestamp_ms'] <= now_ms + 300_000 and
+                            self.classify(message, False, None) == 'NEW_INCOMING'):
+                        # A recipient can answer before the next watcher poll
+                        # discovers the conversation. The app's just-recorded
+                        # outbound attempt provides a narrow, durable boundary
+                        # without treating older chat history as new.
+                        baseline = False
                     detection = self.classify(message, baseline, old_chats.get(chat_id))
                     if detection == 'NEW_INCOMING':
                         counts['new_incoming'] += 1
@@ -144,6 +155,19 @@ class InboxStore:
                 DO UPDATE SET checkpoint=excluded.checkpoint,last_poll=excluded.last_poll''',
                        (source, snapshot['account_phone'], snapshot['max_event_id'], stamp, stamp))
         return counts
+
+    @staticmethod
+    def _recent_outreach_cutoffs(db, now_ms):
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='web_sends'").fetchone():
+            return {}
+        rows = db.execute('''SELECT phone,
+                MAX(CAST((julianday(COALESCE(attempted_at,updated_at,created_at)) - 2440587.5)
+                         * 86400000 AS INTEGER)) AS cutoff
+            FROM web_sends
+            WHERE state='DISPATCHED' AND request_key NOT LIKE 'auto:%'
+            GROUP BY phone''')
+        return {row['phone']: row['cutoff'] for row in rows
+                if row['cutoff'] is not None and 0 <= now_ms - row['cutoff'] <= 300_000}
 
     @staticmethod
     def classify(message, baseline, chat):

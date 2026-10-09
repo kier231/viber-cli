@@ -1,5 +1,6 @@
 from contextlib import closing
 import copy
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -129,6 +130,39 @@ class InboxTests(unittest.TestCase):
         data['chats'].append({**data['chats'][0], 'chat_id': 20})
         self.inbox.ingest(data)
         self.assertEqual(self.records()[2]['detection'], 'BASELINE')
+
+    def test_fast_reply_after_app_outreach_survives_first_conversation_baseline(self):
+        now = int(time.time() * 1000)
+        attempted = datetime.fromtimestamp((now - 10_000) / 1000, timezone.utc).isoformat()
+        with closing(self.inbox.connect()) as db, db:
+            db.execute('''CREATE TABLE web_sends (
+                id TEXT, request_key TEXT, phone TEXT, state TEXT,
+                attempted_at TEXT, updated_at TEXT, created_at TEXT)''')
+            db.execute("INSERT INTO web_sends VALUES('send-1','manual-1',?,'DISPATCHED',?,?,?)",
+                       ('+381641234567', attempted, attempted, attempted))
+        outgoing = message(1, 'OUTGOING', timestamp_ms=now - 8_000)
+        incoming = message(2, timestamp_ms=now - 5_000, body='Quick reply')
+
+        result = self.inbox.ingest(snapshot(outgoing, incoming))
+
+        self.assertEqual(result['new_incoming'], 1)
+        self.assertEqual(self.records()[1]['detection'], 'BASELINE')
+        self.assertEqual(self.records()[2]['detection'], 'NEW_INCOMING')
+
+    def test_old_outreach_does_not_reclassify_first_conversation_history(self):
+        now = int(time.time() * 1000)
+        attempted = datetime.fromtimestamp((now - 600_000) / 1000, timezone.utc).isoformat()
+        with closing(self.inbox.connect()) as db, db:
+            db.execute('''CREATE TABLE web_sends (
+                id TEXT, request_key TEXT, phone TEXT, state TEXT,
+                attempted_at TEXT, updated_at TEXT, created_at TEXT)''')
+            db.execute("INSERT INTO web_sends VALUES('send-1','manual-1',?,'DISPATCHED',?,?,?)",
+                       ('+381641234567', attempted, attempted, attempted))
+
+        result = self.inbox.ingest(snapshot(message(1, timestamp_ms=now - 5_000)))
+
+        self.assertEqual(result['new_incoming'], 0)
+        self.assertEqual(self.records()[1]['detection'], 'BASELINE')
 
     def test_watcher_recovers_from_source_failure_without_advancing_checkpoint(self):
         class Source:
