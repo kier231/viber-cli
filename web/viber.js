@@ -21,6 +21,8 @@
   let csrf, contacts = [], view = 'compose', busy = false, preview = null, conversationLead = null, contactPage = 0;
   let offsets = { events: 0, sent: 0, inbox: 0, scheduled: 0 };
   let schedulesLoading = false;
+  let databaseLoading = false, databaseOffset = 0, databaseSignature = null;
+  let databaseChat = null, databaseOlder = null, databaseRevision = null;
   let pending = null;
   try { pending = JSON.parse(localStorage.getItem(pendingKey) || 'null'); }
   catch { showError(new Error('The saved send attempt cannot be read. Check Sent before sending another message.')); }
@@ -252,6 +254,67 @@
     for (const day of days) { const row = node('tr'); row.append(node('th', day.date), node('td', day.dispatched), node('td', day.blocked), node('td', day.unknown)); $('activity-rows').append(row); }
   }
 
+  async function loadDatabaseInbox(more = false) {
+    if (databaseLoading) return;
+    databaseLoading = true;
+    try {
+      if (!more) { if (databaseOffset > 50) databaseSignature = null; databaseOffset = 0; }
+      const [status, records] = await Promise.all([api('database/status'), api('database/conversations?offset=' + databaseOffset)]);
+      const watching = status.state === 'WATCHING';
+      $('database-status').className = 'health-card ' + (watching ? 'health-healthy' : 'health-unhealthy');
+      $('database-status').replaceChildren(node('strong', watching ? 'Watching for incoming messages' : status.state === 'CONNECTING' ? 'Connecting to Viber’s database…' : 'Message detection paused'),
+        node('p', `${status.conversations} conversation${status.conversations === 1 ? '' : 's'} · ${status.messages} saved messages · ${status.new_incoming} incoming text message${status.new_incoming === 1 ? '' : 's'} detected since baseline`),
+        node('p', `Last checked: ${date(status.last_poll)} · Automatic replies off`, 'hint'));
+      if (status.error) $('database-status').append(node('p', status.error, 'warning'));
+      const signature = JSON.stringify(records);
+      if (more || signature !== databaseSignature) {
+        if (!more) $('database-list').replaceChildren();
+        if (!records.length && !more) $('database-list').append(node('p', watching
+          ? 'No matching personal conversations yet. Save a contact’s phone number and open a Viber chat with them.'
+          : 'Conversation history will appear after the watcher connects.', 'viber-empty'));
+        for (const chat of records) {
+          const card = node('div', null, 'viber-record'), heading = node('h3', chat.company_name + ' · ' + chat.viber_name);
+          card.append(heading, node('p', `${chat.phone} · ${chat.monitoring ? 'Detection on' : 'Detection paused'} · ${chat.new_incoming} new incoming text message${chat.new_incoming === 1 ? '' : 's'}`, 'hint'));
+          const actions = node('div', null, 'actions');
+          actions.append(contactButton('View history', () => openDatabaseConversation(chat)),
+            contactButton(chat.monitoring ? 'Pause detection' : 'Monitor replies', async () => {
+              await api('database/monitor', {source_id: chat.source_id, chat_id: chat.chat_id, enabled: !chat.monitoring});
+              databaseSignature = null; await loadDatabaseInbox();
+            }));
+          card.append(actions); $('database-list').append(card);
+          if (databaseChat && chat.source_id === databaseChat.source_id && chat.chat_id === databaseChat.chat_id && chat.revision !== databaseRevision) $('database-updated').hidden = false;
+        }
+        if (!more) databaseSignature = signature;
+      }
+      databaseOffset += records.length;
+      $('database-more').hidden = records.length < 50;
+    } finally { databaseLoading = false; }
+  }
+
+  async function openDatabaseConversation(chat, older = false) {
+    const query = new URLSearchParams({source_id: chat.source_id, chat_id: String(chat.chat_id)});
+    if (older && databaseOlder != null) query.set('before', String(databaseOlder));
+    const result = await api('database/conversation?' + query);
+    databaseChat = chat; databaseOlder = result.older_before; databaseRevision = result.conversation.revision;
+    $('database-conversation').hidden = false; $('database-updated').hidden = true;
+    $('database-title').textContent = chat.company_name + ' · ' + chat.viber_name;
+    $('database-meta').textContent = chat.phone + ' · Retained Viber Desktop history · Automatic replies off';
+    $('database-compose').hidden = !chat.leads?.length;
+    $('database-older').hidden = databaseOlder == null;
+    if (!older) $('database-messages').replaceChildren();
+    const fragment = document.createDocumentFragment();
+    if (!result.messages.length && !older) fragment.append(node('p', 'No retained messages in this conversation.', 'viber-empty'));
+    const types = {2: 'Image', 3: 'Video', 4: 'Sticker', 5: 'Location', 9: 'Link', 10: 'Contact card', 11: 'File or audio', 15: 'System message'};
+    for (const message of result.messages) {
+      const card = node('article', null, 'database-message ' + (message.direction === 'OUTGOING' ? 'database-outgoing' : 'database-incoming'));
+      const label = message.direction === 'OUTGOING' ? 'You · Outgoing' : message.direction === 'INCOMING' ? chat.viber_name + ' · Incoming' + (message.sender_verified ? '' : ' · Sender needs review') : 'Direction needs review';
+      card.append(node('strong', label), node('p', date(message.timestamp_ms), 'hint'), node('pre', message.body || `[${types[message.message_type] || 'Unsupported message'}]`));
+      const note = message.detection === 'NEW_INCOMING' ? 'New incoming text · detected once' : message.baseline ? 'Imported history · no reply triggered' : message.detection === 'OUTGOING' ? 'Your message · no reply triggered' : message.detection === 'EDITED' ? 'Edited message · no new reply triggered' : 'Stored for review · no reply triggered';
+      card.append(node('small', note)); fragment.append(card);
+    }
+    if (older) $('database-messages').prepend(fragment); else $('database-messages').append(fragment);
+  }
+
   async function navigate(next) {
     view = next;
     for (const id of views) $(id).hidden = id !== next;
@@ -261,6 +324,7 @@
     if (next === 'campaigns') { renderCampaignContacts(); await loadCampaigns(); }
     if (next === 'activity') await loadActivity();
     if (['events', 'sent', 'inbox', 'scheduled'].includes(next)) await loadRecords(next);
+    if (next === 'inbox') await loadDatabaseInbox();
   }
 
   async function checkHealth(inspect = false) {
@@ -510,6 +574,12 @@
   $('inspect').addEventListener('click', action(() => checkHealth(true)));
   for (const kind of ['sent', 'events', 'inbox', 'scheduled']) $(kind === 'events' ? 'event-more' : kind + '-more').addEventListener('click', action(() => loadRecords(kind, true)));
   $('refresh').addEventListener('click', action(async () => { await loadContacts(); if (view === 'health') await checkHealth(); else await navigate(view); }));
+  $('database-refresh').addEventListener('click', action(() => loadDatabaseInbox()));
+  $('database-more').addEventListener('click', action(() => loadDatabaseInbox(true)));
+  $('database-older').addEventListener('click', action(() => openDatabaseConversation(databaseChat, true)));
+  $('database-history-refresh').addEventListener('click', action(() => openDatabaseConversation(databaseChat)));
+  $('database-close').addEventListener('click', () => { $('database-conversation').hidden = true; databaseChat = null; });
+  $('database-compose').addEventListener('click', action(async () => { selectLead(databaseChat.leads[0].id); await navigate('compose'); }));
   window.addEventListener('storage', event => {
     if (event.key === pendingKey) { try { pending = JSON.parse(event.newValue || 'null'); updateCompose(); } catch (error) { showError(error); } }
     if (event.key === campaignPendingKey) { try { campaignPending = JSON.parse(event.newValue || 'null'); updateCampaignControls(); } catch (error) { showError(error); } }
@@ -519,6 +589,7 @@
     updateCountdowns();
     if (csrf && !document.hidden && view === 'scheduled' && !busy && offsets.scheduled <= 100) loadRecords('scheduled').catch(showError);
     if (csrf && !document.hidden && view === 'campaigns' && !busy && !campaignWorking && !campaignPending) loadCampaigns().catch(showError);
+    if (csrf && !document.hidden && view === 'inbox' && !busy && databaseOffset <= 50) loadDatabaseInbox().catch(showError);
   }, 5000);
   action(async () => {
     const session = await api('session', {}); csrf = session.csrf; await loadContacts();

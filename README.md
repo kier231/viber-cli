@@ -104,7 +104,7 @@ Drafts and active campaigns survive restarts. Keep the local server running,
 the PC awake, Windows unlocked, and Viber restored behind another window;
 the browser can be closed. Email campaigns remain in EmailOutreach.
 
-Viber's visible messages are not a full inbox, and accessibility does not
+The older visible-message reader is not a full inbox, and accessibility does not
 always reveal direction or delivery receipts. The UI labels these as snapshots
 and send actions. Email scheduling and campaigns stay in EmailOutreach.
 Reviewing a message, reading chats, switching workspaces, and checking health
@@ -112,6 +112,13 @@ do not send it. Confirmed Viber schedules dispatch automatically when due
 while the server is running, including eligible overdue schedules at restart.
 
 ### Background incoming-message detection
+
+Open **ViberOutreach → Inbox** to see watcher health and the imported
+conversations. **View history** shows incoming/outgoing messages and can load
+older retained history. **Pause detection** stops new reply classifications for
+that conversation; **Monitor replies** enables future detection without replaying
+the backlog. **Write a message** opens the existing reviewed Compose flow.
+Earlier visible chat snapshots remain in the expandable section below the inbox.
 
 The server now starts a separate, read-only Viber database watcher. It uses
 Viber's installed Windows Qt SQLite driver and discovers candidate database
@@ -247,7 +254,8 @@ cleared after the click; it is not a delivery receipt.
 
 The SQLite database is `leads.sqlite3` next to `main.py`. Set `VIBER_CLI_DB` to
 an alternate path. The database stores `id`, `phone`, `company_name`,
-`viber_name`, `contact_name`, and `created_at`. It does not contain messages.
+`viber_name`, `contact_name`, and `created_at` in the contact ledger; the web app
+also stores message history in the separate tables documented above.
 Existing databases gain the nullable `viber_name` field automatically. The
 `set-viber-name` command records a name you have verified in Viber; it does not
 rename the business or Android contact. A successful background `open` also

@@ -58,6 +58,8 @@ def read_snapshot(query, *, source_id, own_phone, phones, after_event_id=0):
     contacts = {int(row['ContactID']): row for row in query(
         'SELECT ContactID,Name,ClientName,Number FROM Contact')}
     self_ids = {key for key, row in contacts.items() if international_phone(row['Number']) == own_phone}
+    if not self_ids:
+        raise DatabaseReadError('The Viber database does not identify the local account. Detection is paused.')
     relations = defaultdict(set)
     for row in query('SELECT ChatID,ContactID FROM ChatRelation'):
         relations[int(row['ChatID'])].add(int(row['ContactID']))

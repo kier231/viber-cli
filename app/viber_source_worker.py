@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 from app.viber_database import DatabaseReadError, read_snapshot, source_identity, validate_schema
-from app.viber_memory import discover_keys, KeyDiscoveryError
+from app.viber_memory import find_viber_process, iter_keys, KeyDiscoveryError
 
 
 class QtViberSource:
@@ -38,24 +38,27 @@ class QtViberSource:
         QCoreApplication.setLibraryPaths([str(base / 'plugins')])
         self.QSqlQuery, self.QSqlDatabase = QSqlQuery, QSqlDatabase
         self.db = None
-        keys = discover_keys(base / 'Viber.exe')
-        for key in keys:
-            connection = QSqlDatabase.addDatabase('QSQLITE', 'viber-reader')
-            connection.setDatabaseName(str(self.path))
-            connection.setConnectOptions('QSQLITE_OPEN_READONLY;QSQLITE_BUSY_TIMEOUT=1000')
-            if connection.open():
-                query = QSqlQuery(connection)
-                query.exec("PRAGMA hexkey='" + key + "'")
-                if query.exec('SELECT count(*) FROM sqlite_master') and query.next():
-                    query.finish()
+        self.viber_process = find_viber_process(base / 'Viber.exe')
+        keys = iter_keys(base / 'Viber.exe')
+        try:
+            for key in keys:
+                connection = QSqlDatabase.addDatabase('QSQLITE', 'viber-reader')
+                connection.setDatabaseName(str(self.path))
+                connection.setConnectOptions('QSQLITE_OPEN_READONLY;QSQLITE_BUSY_TIMEOUT=1000')
+                if connection.open():
+                    query = QSqlQuery(connection)
+                    query.exec("PRAGMA hexkey='" + key + "'")
+                    if query.exec('SELECT count(*) FROM sqlite_master') and query.next():
+                        query.finish()
+                        del query
+                        self.db = connection
+                        break
                     del query
-                    self.db = connection
-                    break
-                del query
-            connection.close()
-            del connection
-            QSqlDatabase.removeDatabase('viber-reader')
-        del keys
+                connection.close()
+                del connection
+                QSqlDatabase.removeDatabase('viber-reader')
+        finally:
+            keys.close()
         if self.db is None:
             raise DatabaseReadError('Viber database key validation failed. Restart Viber and retry.')
         self.query('PRAGMA query_only=ON')
@@ -83,6 +86,8 @@ class QtViberSource:
         return rows
 
     def read(self, request):
+        if not self.viber_process.is_running():
+            raise DatabaseReadError('Viber stopped or restarted. The reader will reconnect when Viber is running.')
         if source_identity(self.path) != self.identity:
             raise DatabaseReadError('Viber profile was replaced. Restart the reader to create a new baseline.')
         version = (self.query('PRAGMA data_version')[0]['data_version'], tuple(sorted(request['phones'])))

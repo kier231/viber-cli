@@ -115,6 +115,24 @@ class WebServerTests(unittest.TestCase):
         self.assertIn(b'workspace-switch', body)
         self.assertIn(b'Email service is offline', body)
 
+    def test_database_inbox_requires_session_and_never_submits_desktop_work(self):
+        self.assertEqual(self.request('/viber/api/database/status')[0], 403)
+        token = self.session()
+        headers = {'X-Viber-CSRF': token}
+        status, _, body = self.request('/viber/api/database/status', headers=headers)
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result['state'], 'STOPPED')
+        self.assertFalse(result['automatic_replies'])
+        status, _, body = self.request('/viber/api/database/conversations', headers=headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), [])
+        bad = {'source_id': 'missing', 'chat_id': 10, 'enabled': 'true'}
+        status, _, _ = self.request('/viber/api/database/monitor', 'POST', json.dumps(bad),
+                                   {**headers, 'Origin': self.origin, 'Content-Type': 'application/json'})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.server.service.pending, 0)
+
     def test_campaign_http_draft_review_activation_and_controls(self):
         lead = self.server.service.store.create_with_android('+381641234567', 'Business', lambda *_: None)
         headers = {'Origin': self.origin, 'Content-Type': 'application/json', 'X-Viber-CSRF': self.session()}

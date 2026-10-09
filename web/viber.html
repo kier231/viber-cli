@@ -149,7 +149,20 @@
     </section>
     <section id="events" aria-labelledby="events-title" hidden><h2 id="events-title">Viber event log</h2><div id="event-list"></div><button id="event-more" type="button" hidden>Load more events</button></section>
     <section id="sent" aria-labelledby="sent-title" hidden><h2 id="sent-title">Viber send history</h2><p class="hint">Attempts made by this localhost app. For an unknown outcome, check Viber before trying again.</p><div id="sent-list"></div><button id="sent-more" type="button" hidden>Load more attempts</button></section>
-    <section id="inbox" aria-labelledby="inbox-title" hidden><h2 id="inbox-title">Saved conversation snapshots</h2><p class="hint">The latest visible messages you read for each contact. Use Conversation to refresh a snapshot. Viber does not expose a complete inbox or reliable reply classification.</p><div id="inbox-list"></div><button id="inbox-more" type="button" hidden>Load more snapshots</button></section>
+    <section id="inbox" aria-labelledby="inbox-title" hidden>
+      <h2 id="inbox-title">Viber inbox</h2>
+      <p class="hint">Messages from personal chats matched to your saved phone numbers. Incoming and outgoing are identified from Viber's database. Detection runs in the background; automatic replies are off.</p>
+      <div id="database-status" class="health-card" role="status" aria-live="polite">Checking the message watcher…</div>
+      <div class="actions"><button id="database-refresh" type="button">Refresh inbox</button></div>
+      <div id="database-list"></div><button id="database-more" type="button" hidden>Load more conversations</button>
+      <section id="database-conversation" class="database-conversation" aria-labelledby="database-title" hidden>
+        <h3 id="database-title">Message history</h3><p id="database-meta" class="hint"></p>
+        <p id="database-updated" class="hint" role="status" hidden>New changes are available. Refresh this history to see them.</p>
+        <div class="actions"><button id="database-history-refresh" type="button">Refresh history</button><button id="database-compose" type="button">Write a message</button><button id="database-close" type="button">Close history</button></div>
+        <button id="database-older" type="button" hidden>Load older messages</button><div id="database-messages"></div>
+      </section>
+      <details class="viber-record"><summary>Saved visible chat snapshots</summary><p class="hint">Earlier captures made through Conversation. These snapshots are separate from the database history above.</p><div id="inbox-list"></div><button id="inbox-more" type="button" hidden>Load more snapshots</button></details>
+    </section>
   </main>
   <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Sending requires a verified recipient and your confirmation. Scheduled messages and campaigns run while the local server is running. Email campaigns remain in EmailOutreach.</footer>
 </body>

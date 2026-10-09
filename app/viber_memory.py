@@ -30,21 +30,33 @@ def keys_in_chunk(data):
     return {key for key in result if len(key) % 2 == 0}
 
 
-def discover_keys(executable, *, timeout=15, max_bytes=768 * 1024 * 1024):
+def find_viber_process(executable):
     if sys.platform != 'win32' or ctypes.sizeof(ctypes.c_void_p) != 8:
         raise KeyDiscoveryError('Database key discovery needs 64-bit Windows Python.')
     import psutil
     expected = Path(executable).resolve()
+    current_user = psutil.Process().username().casefold()
     processes = []
-    for process in psutil.process_iter(['pid', 'name', 'exe']):
+    for process in psutil.process_iter(['pid', 'name', 'exe', 'username']):
         try:
             if (process.info['name'] or '').lower() == 'viber.exe' and process.info['exe']:
-                if Path(process.info['exe']).resolve() == expected:
-                    processes.append(process.pid)
+                if ((process.info['username'] or '').casefold() == current_user
+                        and Path(process.info['exe']).resolve() == expected):
+                    processes.append(process)
         except (psutil.Error, OSError):
             continue
     if len(processes) != 1:
         raise KeyDiscoveryError('Start exactly one Viber Desktop instance for this Windows user.')
+    return processes[0]
+
+
+def discover_keys(executable, *, timeout=15, max_bytes=768 * 1024 * 1024):
+    return tuple(iter_keys(executable, timeout=timeout, max_bytes=max_bytes))
+
+
+def iter_keys(executable, *, timeout=15, max_bytes=768 * 1024 * 1024):
+    """Yield candidates immediately, allowing validation to stop the scan."""
+    process = find_viber_process(executable)
 
     class MemoryInfo(ctypes.Structure):
         _fields_ = [('BaseAddress', ctypes.c_void_p), ('AllocationBase', ctypes.c_void_p),
@@ -64,7 +76,7 @@ def discover_keys(executable, *, timeout=15, max_bytes=768 * 1024 * 1024):
     kernel.ReadProcessMemory.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
-    handle = kernel.OpenProcess(0x0400 | 0x0010, False, processes[0])
+    handle = kernel.OpenProcess(0x0400 | 0x0010, False, process.pid)
     if not handle:
         raise KeyDiscoveryError('Windows denied read access to your Viber process.')
     found, address, total = set(), 0, 0
@@ -89,7 +101,11 @@ def discover_keys(executable, *, timeout=15, max_bytes=768 * 1024 * 1024):
                     ok = kernel.ReadProcessMemory(handle, base + offset, buffer, size, ctypes.byref(read))
                     if ok and read.value:
                         chunk = tail + buffer.raw[:read.value]
-                        found.update(keys_in_chunk(chunk))
+                        for key in sorted(keys_in_chunk(chunk) - found):
+                            found.add(key)
+                            if len(found) > 32:
+                                raise KeyDiscoveryError('Too many database key candidates; refusing ambiguous discovery.')
+                            yield key
                         tail = chunk[-2048:]
                     else:
                         tail = b''
@@ -98,8 +114,5 @@ def discover_keys(executable, *, timeout=15, max_bytes=768 * 1024 * 1024):
             address = end
         if not found:
             raise KeyDiscoveryError('No database key was available in Viber memory. Restart Viber and retry.')
-        if len(found) > 32:
-            raise KeyDiscoveryError('Too many database key candidates; refusing ambiguous discovery.')
-        return tuple(sorted(found))
     finally:
         kernel.CloseHandle(handle)

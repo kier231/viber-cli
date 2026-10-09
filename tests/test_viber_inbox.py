@@ -21,9 +21,9 @@ def message(event_id, direction='INCOMING', body='Same text', **overrides):
 
 
 def snapshot(*messages, source='source-a', maximum=None):
-    return {'source_id': source, 'account_phone': '+381655631344',
+    return {'source_id': source, 'account_phone': '+381641111111',
             'max_event_id': maximum if maximum is not None else max((m['event_id'] for m in messages), default=0),
-            'chats': [{'chat_id': 10, 'peer_id': 2, 'phone': '+381677346084', 'viber_name': 'Person'}],
+            'chats': [{'chat_id': 10, 'peer_id': 2, 'phone': '+381641234567', 'viber_name': 'Person'}],
             'messages': list(messages)}
 
 
@@ -32,7 +32,7 @@ class InboxTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name) / 'ledger.db'
         self.leads = LeadStore(self.path)
-        self.leads.create_with_android('+381677346084', 'Business', lambda *_: None)
+        self.leads.create_with_android('+381641234567', 'Business', lambda *_: None)
         self.inbox = InboxStore(self.path)
 
     def tearDown(self):
@@ -173,7 +173,7 @@ class SourceQueryTests(unittest.TestCase):
                 CREATE TABLE ChatRelation(ChatID,ContactID);
                 CREATE TABLE Events(EventID,TimeStamp,Direction,ChatID,ContactID,Token,SortOrder);
                 CREATE TABLE Messages(EventID,Type,Body,ClientFlag);
-                INSERT INTO Contact VALUES(1,'Self','Self','381655631344'),(2,'Business','Person','381677346084');
+                INSERT INTO Contact VALUES(1,'Self','Self','381641111111'),(2,'Business','Person','381641234567');
                 INSERT INTO ChatInfo VALUES(10,NULL,0,255,NULL),(20,'Group',4,255,NULL),(30,NULL,4,255,NULL);
                 INSERT INTO ChatRelation VALUES(10,1),(10,2),(20,1),(20,2),(30,1),(30,2);
                 INSERT INTO Events VALUES(1,1000,0,10,2,123,1),(2,2000,1,10,1,124,2),(3,3000,0,20,2,125,3);
@@ -181,7 +181,7 @@ class SourceQueryTests(unittest.TestCase):
             ''')
             query = lambda sql, parameters=(): [dict(row) for row in db.execute(sql, parameters)]
             validate_schema(query)
-            result = read_snapshot(query, source_id='test', own_phone='381655631344', phones=['+381677346084'])
+            result = read_snapshot(query, source_id='test', own_phone='381641111111', phones=['+381641234567'])
             self.assertEqual([c['chat_id'] for c in result['chats']], [10])
             self.assertEqual([m['direction'] for m in result['messages']], ['INCOMING', 'OUTGOING'])
             self.assertTrue(all(m['sender_verified'] for m in result['messages']))
@@ -194,7 +194,7 @@ class SourceQueryTests(unittest.TestCase):
         sql = "PRAGMA hexkey='" + key + "'"
         self.assertEqual(keys_in_chunk(sql.encode() + sql.encode('utf-16-le')), {key})
         self.assertEqual(keys_in_chunk(key.encode() + b"PRAGMA hexkey='abc'"), set())
-        self.assertIsNone(international_phone('++381677346084'))
+        self.assertIsNone(international_phone('++381641234567'))
 
 
 if __name__ == '__main__':
