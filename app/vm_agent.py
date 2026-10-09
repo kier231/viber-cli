@@ -27,7 +27,9 @@ class Agent:
             pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
             try:
                 if self.desktop is None:
-                    self.desktop = BackgroundViberClient().connect()
+                    # The VM is the isolation boundary, so Viber may own the
+                    # guest foreground without taking focus on the host.
+                    self.desktop = BackgroundViberClient(allow_foreground=True).connect()
                 if action == "open":
                     return {"name": self.desktop.open_phone(payload["phone"])}
                 if action == "current-name":

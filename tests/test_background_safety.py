@@ -5,6 +5,10 @@ from app.viber_background import BackgroundViberClient, _usable_viber_name
 
 
 class BackgroundSafetyTests(unittest.TestCase):
+    def test_vm_mode_allows_viber_to_own_guest_foreground(self):
+        client = BackgroundViberClient(allow_foreground=True)
+        client._assert_no_focus_theft()
+
     def test_unnamed_or_unregistered_chat_is_not_a_recipient(self):
         for name in ("", "Unknown", "My Notes", "No results"):
             with self.subTest(name=name):

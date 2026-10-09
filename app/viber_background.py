@@ -33,8 +33,9 @@ def _usable_viber_name(name: str) -> bool:
 
 
 class BackgroundViberClient:
-    def __init__(self, debug: bool = False):
+    def __init__(self, debug: bool = False, allow_foreground: bool = False):
         self.ui = ViberClient(debug=debug)
+        self.allow_foreground = allow_foreground
         self.window = None
         self.expected_name: str | None = None
         self.prepared = None
@@ -58,6 +59,8 @@ class BackgroundViberClient:
         return matches[0]
 
     def _assert_no_focus_theft(self):
+        if self.allow_foreground:
+            return
         foreground = _USER32.GetForegroundWindow()
         foreground_pid = wintypes.DWORD()
         _USER32.GetWindowThreadProcessId(foreground, ctypes.byref(foreground_pid))
