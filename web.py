@@ -54,6 +54,7 @@ def main():
     # Start only after binding the port, so a failed launch never runs saved jobs.
     service.start_scheduler()
     service.watcher.start()
+    service.replies.start()
     print(f"Outreach app: http://127.0.0.1:{args.port}/", flush=True)
     print("Click the title to switch between EmailOutreach and ViberOutreach.", flush=True)
     print("Keep the email service running. Keep Viber restored behind your other windows.", flush=True)

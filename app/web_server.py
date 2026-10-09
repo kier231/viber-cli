@@ -144,15 +144,19 @@ class Handler(BaseHTTPRequestHandler):
         self._authenticate()
         if self.command == "GET":
             if path == "/viber/api/database/status":
-                return self._reply(200, service.watcher.status())
+                return self._reply(200, {**service.watcher.status(), 'automatic_replies': service.replies.settings()['enabled']})
+            if path == "/viber/api/replies":
+                return self._reply(200, {'settings': service.replies.settings(), 'jobs': service.replies.jobs()})
             if path == "/viber/api/database/conversations":
                 return self._reply(200, service.watcher.inbox.conversations(
                     offset=int(query.get('offset', ['0'])[0])))
             if path == "/viber/api/database/conversation":
                 before = query.get('before', [None])[0]
-                return self._reply(200, service.watcher.inbox.conversation(
+                result = service.watcher.inbox.conversation(
                     query.get('source_id', [''])[0], int(query.get('chat_id', ['0'])[0]),
-                    before=int(before) if before is not None else None))
+                    before=int(before) if before is not None else None)
+                result['automatic_replies'] = bool(service.replies.settings()['enabled'] and result['conversation']['reply_enabled'] and result['conversation']['monitoring'])
+                return self._reply(200, result)
             if path == "/viber/api/contacts":
                 return self._reply(200, service.contacts())
             if path == "/viber/api/campaigns":
@@ -172,6 +176,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(200, service.activity(int(query.get("days", ["30"])[0])))
         if self.command == "POST":
             payload = self._json()
+            if path == "/viber/api/replies":
+                return self._reply(200, service.replies.configure(payload.get('enabled'), payload.get('instructions')))
+            if path == "/viber/api/replies/conversation":
+                return self._reply(200, service.replies.conversation_control(payload.get('source_id'), payload.get('chat_id'), payload.get('enabled')))
             if path == "/viber/api/database/monitor":
                 return self._reply(200, service.watcher.inbox.monitor(
                     payload.get('source_id'), payload.get('chat_id'), payload.get('enabled')))

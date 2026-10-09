@@ -22,6 +22,7 @@ from app.scheduling import parse_schedule, MAX_LATENESS_SECONDS, TIME_ZONE
 from app.viber import ViberError
 from app.viber_background import BackgroundViberClient, _usable_viber_name
 from app.viber_watcher import DatabaseWatcher
+from app.auto_replies import AutoReplies
 
 
 def now():
@@ -87,6 +88,7 @@ class WebService:
                        "WHERE state IN ('QUEUED', 'SUBMITTING')", (now(),))
             for campaign in db.execute("SELECT id FROM web_campaigns WHERE state='ACTIVE'").fetchall():
                 self.campaigns.reconcile(db, campaign["id"])
+        self.replies = AutoReplies(self)
         if start_scheduler:
             self.start_scheduler()
 
@@ -105,8 +107,9 @@ class WebService:
             self.scheduler_stop.set()
         if self.scheduler:
             self.scheduler.join()
-        self.watcher.close()
+        self.replies.close()
         self.pool.shutdown(wait=True)
+        self.watcher.close()
 
     def event(self, kind, detail):
         with closing(self.store._connect()) as db, db:
@@ -161,6 +164,7 @@ class WebService:
         finally:
             try:
                 self.campaigns.after_operation(operation_id)
+                self.replies.after_operation(operation_id)
             except Exception as exc:
                 try:
                     self.event("CAMPAIGN_ERROR", str(exc))

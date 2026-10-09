@@ -67,6 +67,7 @@ class DatabaseWatcher:
         self.interval = interval
         self.stop_event = threading.Event()
         self.lock = threading.RLock()
+        self.poll_lock = threading.Lock()
         self.thread = None
         self.source = None
         self.state = 'STOPPED'
@@ -88,6 +89,11 @@ class DatabaseWatcher:
                     'last_attempt': self.last_attempt, 'poll_seconds': self.interval}
 
     def poll_once(self):
+        # The sender also requests a fresh read immediately before dispatch.
+        with self.poll_lock:
+            return self._poll_once()
+
+    def _poll_once(self):
         with self.lock:
             self.last_attempt = utc_now()
         try:

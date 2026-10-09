@@ -8,6 +8,7 @@ not expose its header through UI Automation.
 
 import ctypes
 from ctypes import wintypes
+from contextlib import nullcontext
 import re
 import time
 
@@ -227,7 +228,7 @@ class BackgroundViberClient:
             self._post(_WM_KEYUP, _VK_BACK)
         time.sleep(.15)
 
-    def send_message(self, text: str) -> None:
+    def send_message(self, text: str, before_dispatch=None, on_dispatch=None, dispatch_lock=None) -> None:
         if not text or not text.strip() or "\n" in text or "\r" in text:
             raise ViberError("Send one nonempty line at a time.")
         if any(ord(char) < 32 or ord(char) > 0xFFFF for char in text):
@@ -253,7 +254,20 @@ class BackgroundViberClient:
         if not send.is_enabled():
             raise ViberError("Viber send button is unavailable; draft remains unsent.")
         self._assert_no_focus_theft()
-        self._click(send)
+        try:
+            if before_dispatch:
+                before_dispatch()
+            with dispatch_lock if dispatch_lock is not None else nullcontext():
+                if not self.verify_current_name(self.expected_name) or composer.get_value() != text:
+                    raise ViberError("Conversation or draft changed before dispatch.")
+                if on_dispatch:
+                    on_dispatch()
+                self._click(send)
+        except Exception:
+            # Erase only our own unchanged draft in the verified chat.
+            if self.verify_current_name(self.expected_name) and composer.get_value() == text:
+                self._erase_draft(len(units) // 2)
+            raise
         time.sleep(.3)
         if composer.get_value():
             raise ViberError("Viber did not clear the draft; delivery is unverified.")
