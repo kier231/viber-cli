@@ -21,6 +21,7 @@ from app.phone import normalize_serbian_phone
 from app.scheduling import parse_schedule, MAX_LATENESS_SECONDS, TIME_ZONE
 from app.viber import ViberError
 from app.viber_background import BackgroundViberClient, _usable_viber_name
+from app.viber_watcher import DatabaseWatcher
 
 
 def now():
@@ -43,6 +44,7 @@ class WebService:
     def __init__(self, path, client_factory=BackgroundViberClient,
                  android_add=add_android_contact, start_scheduler=False):
         self.store = LeadStore(path)
+        self.watcher = DatabaseWatcher(self.store)
         self.client_factory = client_factory
         self.android_add = android_add
         self.lock = threading.RLock()
@@ -103,6 +105,7 @@ class WebService:
             self.scheduler_stop.set()
         if self.scheduler:
             self.scheduler.join()
+        self.watcher.close()
         self.pool.shutdown(wait=True)
 
     def event(self, kind, detail):

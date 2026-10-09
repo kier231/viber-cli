@@ -111,6 +111,50 @@ Reviewing a message, reading chats, switching workspaces, and checking health
 do not send it. Confirmed Viber schedules dispatch automatically when due
 while the server is running, including eligible overdue schedules at restart.
 
+### Background incoming-message detection
+
+The server now starts a separate, read-only Viber database watcher. It uses
+Viber's installed Windows Qt SQLite driver and discovers candidate database
+keys through read-only access to your running Viber process. Keys are validated
+against your database and remain in memory: they are never logged, saved, or
+passed on the command line. The reader does not activate, restore, pause, or
+type into Viber and does not need its window visible. Viber must be running
+and logged in. Sending still has the desktop-window requirements above.
+
+Install the updated `requirements.txt` before starting the server. The tested
+Windows Viber build uses the Qt 6.11 ABI series; `PySide6-Essentials==6.11.2`
+provides the isolated SQL bindings. A Qt version mismatch, unreadable key,
+changed schema, reused message identity, or reset history pauses detection
+with a visible error. The reader retries after 30 seconds. If key discovery
+fails, restart Viber and retry. For multiple profiles, set `VIBER_CLI_PROFILE`
+to the chosen profile directory containing `viber.db`; `VIBER_CLI_VIBER_DIR`
+can select a nondefault Viber installation. Do not delete the app's saved
+message ledger to resolve a source error.
+
+Only personal conversations matched to saved contact phone numbers are
+imported. Named/group/public/self chats and unsupported chat flags are excluded.
+Business and Android names are preserved; Viber's profile name is displayed
+separately. The first import for each conversation is a history baseline and
+never counts as a new reply. Later messages use Viber's native event ID, chat
+ID, direction, sender membership, and timestamp. Identical message text is not
+used for deduplication. Outgoing messages, edits, reactions, system events, and
+older-history backfills cannot become new incoming text triggers. Unknown
+directions or unsupported message types are retained for review.
+
+SQLite source reads run in short read-only transactions, including committed
+WAL changes. Full retained history for matched contacts is reconciled whenever
+the database changes, including old edits and deletions. The message ledger
+and checkpoints commit together in `leads.sqlite3`; restarts resume detection
+without reimporting messages as new. Conversation revisions change on new,
+edited, deleted, or manually sent messages, providing a context check for a
+future reply worker. This release only records messages: **no Codex calls or
+automatic replies are enabled**. Existing authorized campaigns and schedules
+continue to work independently.
+
+The added local tables are `viber_sources`, `viber_conversations`, and
+`viber_messages`. They contain private conversation history and are covered by
+the existing database Git exclusions. No Viber source database is modified.
+
 The server binds only to `127.0.0.1` and checks the Host, Origin, and browser
 tokens. Viber desktop actions run on one COM worker so web requests remain
 responsive. Reviewed messages expire after two minutes. Submission keys are

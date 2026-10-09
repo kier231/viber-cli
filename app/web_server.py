@@ -143,6 +143,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, {"csrf": token})
         self._authenticate()
         if self.command == "GET":
+            if path == "/viber/api/database/status":
+                return self._reply(200, service.watcher.status())
+            if path == "/viber/api/database/conversations":
+                return self._reply(200, service.watcher.inbox.conversations(
+                    offset=int(query.get('offset', ['0'])[0])))
+            if path == "/viber/api/database/conversation":
+                before = query.get('before', [None])[0]
+                return self._reply(200, service.watcher.inbox.conversation(
+                    query.get('source_id', [''])[0], int(query.get('chat_id', ['0'])[0]),
+                    before=int(before) if before is not None else None))
             if path == "/viber/api/contacts":
                 return self._reply(200, service.contacts())
             if path == "/viber/api/campaigns":
@@ -162,6 +172,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(200, service.activity(int(query.get("days", ["30"])[0])))
         if self.command == "POST":
             payload = self._json()
+            if path == "/viber/api/database/monitor":
+                return self._reply(200, service.watcher.inbox.monitor(
+                    payload.get('source_id'), payload.get('chat_id'), payload.get('enabled')))
             if path == "/viber/api/contacts":
                 result = service.add_contact(payload)
             elif path == "/viber/api/campaigns":

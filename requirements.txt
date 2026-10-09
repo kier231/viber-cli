@@ -5,3 +5,4 @@ Pillow>=10,<13
 pytesseract>=0.3.10,<0.4
 pywin32>=306,<400
 tzdata>=2025.1,<2028
+PySide6-Essentials==6.11.2; sys_platform == "win32"
