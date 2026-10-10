@@ -96,6 +96,24 @@ class InboxTests(unittest.TestCase):
         self.inbox.ingest(snapshot(self.first, message(2, timestamp_ms=self.first['timestamp_ms'])))
         self.assertEqual(self.records()[2]['detection'], 'HISTORICAL')
 
+    def test_incoming_link_preview_is_text_once_and_still_respects_baselines_and_sender(self):
+        first = message(1, body='old.example', message_type=9, timestamp_ms=int(time.time()*1000)-10000)
+        self.inbox.ingest(snapshot(first))
+        incoming = message(2, body='bridgesolver.com', message_type=9)
+        invalid = [message(3, message_type=9, sender_verified=False),
+                   message(4, message_type=9, client_flag=256),
+                   message(5, message_type=9, body=' ')]
+        self.assertEqual(self.inbox.ingest(snapshot(first, incoming, *invalid))['new_incoming'], 1)
+        self.assertEqual(self.records()[1]['detection'], 'BASELINE')
+        self.assertEqual(self.records()[2]['detection'], 'NEW_INCOMING')
+        self.assertEqual(self.records()[3]['detection'], 'AMBIGUOUS')
+        self.assertEqual(self.records()[4]['detection'], 'IGNORED')
+        self.assertEqual(self.records()[5]['detection'], 'REVIEW')
+        self.assertEqual(self.inbox.ingest(snapshot(first, incoming, *invalid))['new_incoming'], 0)
+        edited = {**incoming, 'body': 'other.example'}
+        self.assertEqual(self.inbox.ingest(snapshot(first, edited, *invalid))['new_incoming'], 0)
+        self.assertEqual(self.records()[2]['detection'], 'EDITED')
+
     def test_monitoring_disabled_and_reenabled_never_replays_old_candidates(self):
         self.baseline()
         second = message(2)
@@ -322,6 +340,19 @@ class SourceQueryTests(unittest.TestCase):
             self.assertEqual([c['chat_id'] for c in result['chats']], [10])
             self.assertEqual([m['direction'] for m in result['messages']], ['INCOMING', 'OUTGOING'])
             self.assertTrue(all(m['sender_verified'] for m in result['messages']))
+            # A first incoming link must discover a verified direct sender too.
+            db.execute("UPDATE Messages SET Type=9,Body='bridgesolver.com' WHERE EventID=1")
+            discovered = read_snapshot(query, source_id='test', own_phone='381641111111', phones=[],
+                                       include_new_senders=True, incoming_since_ms=900)
+            self.assertEqual([c['chat_id'] for c in discovered['chats']], [10])
+            self.assertEqual(discovered['messages'][0]['message_type'], 9)
+            for change in ("UPDATE Messages SET ClientFlag=256 WHERE EventID=1",
+                           "UPDATE Messages SET ClientFlag=0,Body='' WHERE EventID=1",
+                           "UPDATE Messages SET Type=2,Body='Photo' WHERE EventID=1"):
+                db.execute(change)
+                blocked = read_snapshot(query, source_id='test', own_phone='381641111111', phones=[],
+                                        include_new_senders=True, incoming_since_ms=900)
+                self.assertEqual(blocked['chats'], [])
             db.execute('ALTER TABLE Messages RENAME COLUMN ClientFlag TO Changed')
             with self.assertRaises(DatabaseReadError):
                 validate_schema(query)

@@ -44,9 +44,12 @@ try {
         if (-not $process.WaitForExit(15000)) { throw 'Old private reader is still running; replacement is blocked.' }
     }
     if (Get-NetTCPConnection -LocalPort 4011 -State Listen -ErrorAction SilentlyContinue) { throw 'The old bridge is still running.' }
-    $destination = Join-Path $root 'app\viber_source_worker.py'
-    Copy-Item -LiteralPath $destination -Destination (Join-Path $PSScriptRoot 'previous_viber_source_worker.py')
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'viber_source_worker.py') -Destination $destination -Force
+    foreach ($name in @('viber_source_worker.py','viber_database.py')) {
+        $destination = Join-Path $root ('app\' + $name)
+        Copy-Item -LiteralPath $destination -Destination (Join-Path $PSScriptRoot ('previous_' + $name))
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $destination -Force
+        if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $name) -Algorithm SHA256).Hash) { throw 'Installed reader hash did not match.' }
+    }
     Start-ScheduledTask -TaskName 'SajtologViberWorker'
     Write-Output ('Reader updated; old processes stopped before restarting ' + $marker.id + '.')
     Get-FileHash -LiteralPath $destination -Algorithm SHA256 | Select-Object Hash

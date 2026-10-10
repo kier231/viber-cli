@@ -7,7 +7,7 @@ import json
 import sqlite3
 import time
 
-from app.viber_database import DatabaseReadError, international_phone
+from app.viber_database import DatabaseReadError, international_phone, TEXT_MESSAGE_TYPES
 from app.storage import connect
 
 
@@ -31,7 +31,7 @@ def outgoing_token_assigned(old, message):
             and old['direction'] == message['direction'] == 'OUTGOING'
             and old['sender_verified'] and message['sender_verified']
             and old['message_type'] == message['message_type']
-            and message['message_type'] in (1, 9)  # Plain text or text containing a link.
+            and message['message_type'] in TEXT_MESSAGE_TYPES
             and all(old[key] == message[key] for key in ('chat_id','sender_id','body'))
             and abs(old['timestamp_ms']-message['timestamp_ms']) <= 300_000)
 
@@ -208,7 +208,7 @@ class InboxStore:
             return 'HISTORICAL'
         if message['timestamp_ms'] > int(time.time() * 1000) + 300_000:
             return 'REVIEW'
-        if message['message_type'] != 1 or not message['body'].strip():
+        if message['message_type'] not in TEXT_MESSAGE_TYPES or not message['body'].strip():
             return 'REVIEW'
         return 'NEW_INCOMING'
 

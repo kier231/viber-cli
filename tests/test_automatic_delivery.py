@@ -41,6 +41,18 @@ class AutomaticDeliveryTests(unittest.TestCase):
         self.assertEqual(len(self.generator.contexts), 1)
         self.assertEqual(len(self.desktop.sent), 1)
 
+    def test_incoming_domain_link_reaches_codex_and_replies_once(self):
+        from test_viber_inbox import message
+        self.source.data['messages'].append(message(2, body='bridgesolver.com', message_type=9))
+        self.source.data['max_event_id'] = 2
+        self.service.watcher.poll_once()
+        self.replies.tick(); self.wait_state('DISPATCHED')
+        self.assertEqual(self.generator.contexts[0]['messages'][-1]['body'], 'bridgesolver.com')
+        self.assertEqual(self.generator.contexts[0]['messages'][-1]['message_type'], 9)
+        self.replies.tick()
+        self.assertEqual(len(self.generator.contexts), 1)
+        self.assertEqual(self.desktop.sent, ['Zdravo!'])
+
     def test_assumption_question_is_private_and_does_not_delay_send(self):
         self.generator.result = {'action':'reply', 'text':'Mogu da predlozim obim.', 'reason':'Proposal', 'assumptions':[ASSUMPTION]}
         self.incoming(); self.replies.tick()

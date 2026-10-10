@@ -10,6 +10,9 @@ class DatabaseReadError(RuntimeError):
     pass
 
 
+TEXT_MESSAGE_TYPES = (1, 9)  # Plain text and text with a Viber link preview.
+
+
 def international_phone(value):
     if not isinstance(value, str):
         return None
@@ -82,7 +85,9 @@ def read_snapshot(query, *, source_id, own_phone, phones, after_event_id=0, incl
                 continue
             fresh = query('''SELECT e.EventID FROM Events e JOIN Messages m ON m.EventID=e.EventID
                 WHERE e.ChatID=? AND e.ContactID=? AND e.Direction=0 AND e.EventID>?
-                AND e.TimeStamp>=? AND m.Type=1 LIMIT 1''',(chat_id,peer_id,after_event_id,incoming_since_ms))
+                AND e.TimeStamp>=? AND m.Type IN (1,9)
+                AND COALESCE(m.ClientFlag,0) NOT IN (256,257)
+                AND LENGTH(TRIM(COALESCE(m.Body,'')))>0 LIMIT 1''',(chat_id,peer_id,after_event_id,incoming_since_ms))
             if not fresh:
                 continue
         chats.append({'chat_id': chat_id, 'peer_id': peer_id, 'phone': phone,

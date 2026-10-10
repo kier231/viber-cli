@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$BackupPath)
+param([Parameter(Mandatory=$true)][string]$BackupPath, [string]$CredentialPath)
 $ErrorActionPreference = 'Stop'
 $root = 'C:\viber-cli'
 $vbox = Join-Path $env:ProgramFiles 'Oracle\VirtualBox\VBoxManage.exe'
@@ -6,10 +6,18 @@ if (Get-NetTCPConnection -LocalPort 4001 -State Listen -ErrorAction SilentlyCont
     throw 'Gracefully stop the controller and drain work before updating VM readers.'
 }
 $resolvedBackup = (Resolve-Path -LiteralPath $BackupPath).Path
-if (-not $resolvedBackup.StartsWith('C:\viber-cli\backups\reader-cache-', [StringComparison]::OrdinalIgnoreCase)) {
+if ($resolvedBackup -notmatch '^C:\\viber-cli\\backups\\(?:reader-cache|reply-recovery)-[^\\]+$') {
     throw 'Unexpected reader backup path.'
 }
-$credentialPath = Join-Path $env:LOCALAPPDATA 'Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\viber-cli\vm-credential.xml'
+$credentialCandidates = @((Join-Path $env:LOCALAPPDATA 'viber-cli\vm-credential.xml'),
+    (Join-Path $env:USERPROFILE 'AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\viber-cli\vm-credential.xml'))
+if (-not $CredentialPath) {
+    $savedCredentials = @($credentialCandidates | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+    if ($savedCredentials.Count -ne 1) { throw 'Choose the exact saved host VM credential path when multiple copies exist.' }
+    $CredentialPath = $savedCredentials[0]
+} elseif ([IO.Path]::GetFullPath($CredentialPath) -notin $credentialCandidates -or -not (Test-Path -LiteralPath $CredentialPath -PathType Leaf)) {
+    throw 'Use a saved credential from the known host Viber configuration.'
+}
 $credential = Import-Clixml -LiteralPath $credentialPath
 if ($credential -isnot [Management.Automation.PSCredential]) { throw 'The saved VM credential is invalid.' }
 $authFile = Join-Path $root ('private\reader-fix-auth-' + [guid]::NewGuid().ToString('N') + '.tmp')
@@ -28,6 +36,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Could not create the guest backup directory.' }
         & $vbox guestcontrol $slot.vm_name copyto --username $credential.UserName --passwordfile $authFile (Join-Path $PSScriptRoot '..\app\viber_source_worker.py') ($guestStage+'\viber_source_worker.py')
         if ($LASTEXITCODE -ne 0) { throw 'Could not stage the reader update.' }
+        & $vbox guestcontrol $slot.vm_name copyto --username $credential.UserName --passwordfile $authFile (Join-Path $PSScriptRoot '..\app\viber_database.py') ($guestStage+'\viber_database.py')
+        if ($LASTEXITCODE -ne 0) { throw 'Could not stage the native message query update.' }
         & $vbox guestcontrol $slot.vm_name copyto --username $credential.UserName --passwordfile $authFile (Join-Path $PSScriptRoot 'apply_reader_cache_fix_guest.ps1') ($guestStage+'\apply_reader_cache_fix_guest.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'Could not stage the trusted guest installer.' }
         & $vbox guestcontrol $slot.vm_name run --username $credential.UserName --passwordfile $authFile --exe 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' --wait-stdout --wait-stderr --timeout 60000 -- powershell.exe -NoProfile -ExecutionPolicy Bypass -File ($guestStage+'\apply_reader_cache_fix_guest.ps1') -ExpectedUuid $slot.hardware_uuid
