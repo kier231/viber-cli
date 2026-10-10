@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-11",
+  "owner_feedback": "Owner approved the complete simulated conversations and requested implementation.",
+  "draft_model": "gpt-6.1-sol",
+  "reasoning": "low",
+  "portfolio_current_estimates": 400,
+  "verification": {
+    "unit_suite_total": 248,
+    "unit_suite_passed": 247,
+    "unit_suite_skipped": 1,
+    "model_preference_override_regression": "passed",
+    "real_model_general_and_multiturn_scenarios": 20,
+    "real_model_current_quotes_deadlines_and_private_questions": 6,
+    "real_model_checks_passed": true,
+    "test_viber_messages_sent": 0,
+    "live_controller": "WATCHING, no error",
+    "automatic_delivery": "enabled, without individual approval",
+    "existing_history_preferences_and_send_markers": "preserved"
+  },
+  "scope": "Owner-approved voice and business instructions, present-day portfolio estimates, production schema adaptation, and explicit drafting model selection.",
+  "privacy": "Live payment details, customer-specific instructions, raw model reports and local rollback snapshots are not committed.",
+  "quality_evidence": "Owner assessment plus sampled behavior checks; not an authorship detector or a guarantee about every future conversation."
+}

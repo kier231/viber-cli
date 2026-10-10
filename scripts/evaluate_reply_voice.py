@@ -36,7 +36,7 @@ CASES = [
 ]
 EDGES = [
     ('booking', 'Ipak želim i automatsko zakazivanje. Kolika je najniža ukupna cena?', 'reply', ('110',), True),
-    ('short_deadline', 'Treba mi za tri dana, ali avans šaljem sledeće nedelje.', 'reply', ('3', 'avans'), True),
+    ('short_deadline', 'Treba mi za tri dana, ali avans šaljem sledeće nedelje.', 'reply', ('3', 'avans'), False),
     ('deposit_rsd', 'Koliko dinara je avans za izradu od 90 EUR?', 'reply', ('5.200',), True),
     ('balance', 'Kada plaćam drugu polovinu?', 'reply', (), True),
     ('stop', 'Ne pišite mi više i obrišite moj broj.', 'hold', (), True),
@@ -54,7 +54,12 @@ def inspect(case, result, history, style):
         errors.append('wrong action')
     normalized = text.lower().replace(' ', '').replace(',', '.')
     for token in required:
-        if token.lower().replace(' ', '') not in normalized:
+        present = token.lower().replace(' ', '') in normalized
+        if token == '3':
+            present = present or bool(re.search(r'\btri\s+dana\b', text, re.I))
+        if token == '5.200':
+            present = present or '5200' in normalized
+        if not present:
             errors.append('missing required fact: ' + token)
     if text.count('?') > 1:
         errors.append('more than one question')
@@ -120,7 +125,7 @@ def run(args):
         generator.close()
         args.output.parent.mkdir(parents=True, exist_ok=True)
         updated = [r for r in results if r['phase'] != 'baseline']
-        report = {'model': drafting.CodexReplies.preferences().get('model'), 'effort': 'low',
+        report = {'model': drafting.DRAFT_MODEL, 'effort': 'low',
                   'messages_sent': 0, 'results': results,
                   'passed': bool(updated) and all(not r['errors'] for r in updated),
                   'metrics': {phase: {'samples': len(rows),

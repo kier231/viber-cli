@@ -49,6 +49,8 @@ class CodexRecoveryTests(unittest.TestCase):
 
     def test_web_research_allowed_with_all_other_integrations_still_disabled(self):
         generator = self.generator()
+        generator.preferences = Mock(return_value={'model': 'gpt-6-astra',
+                                                    'model_reasoning_effort': 'xhigh'})
         captured = []
         def launch(command, **kwargs):
             captured.extend(command)
@@ -61,6 +63,8 @@ class CodexRecoveryTests(unittest.TestCase):
             result = generator.generate({'owner_client_description': 'Salon'}, 'Reply')
         self.assertEqual(result['action'], 'reply')
         self.assertIn('web_search="live"', captured)
+        self.assertIn('model="gpt-6.1-sol"', captured)
+        self.assertIn('model_reasoning_effort="low"', captured)
         for key in ('shell_tool', 'apps', 'plugins', 'computer_use', 'multi_agent'):
             self.assertIn('features.' + key + '=false', captured)
         self.assertIn('mcp_servers={}', captured)

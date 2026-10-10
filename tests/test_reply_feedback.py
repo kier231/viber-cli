@@ -27,6 +27,21 @@ class PortfolioTests(unittest.TestCase):
         self.assertNotIn('search_terms', rows[0])
         self.assertLess(len(json.dumps(rows)), 3500)
 
+    def test_current_quotes_reach_relevant_context_without_inventing_past_invoices(self):
+        context = {'contact': {'business_name': 'Frizerski salon'}, 'messages': []}
+        quotes = {row['url']: row['current_estimate'] for row in candidates(context)}
+        self.assertEqual(quotes['https://bibbis.rs/']['build_price_eur'], 120)
+        self.assertEqual(quotes['https://larrykinghair.com/']['build_price_eur'], 490)
+        self.assertIn('prodavnica', quotes['https://larrykinghair.com/']['scope'])
+        self.assertTrue(all(row['historical_price_eur'] is None for row in quotes.values()))
+
+    def test_import_rejects_a_historical_charge_disguised_as_a_current_quote(self):
+        entry = {'name': 'Example', 'url': 'https://example.com/',
+                 'current_estimate': {'currency': 'EUR', 'build_price_eur': 120,
+                                      'scope': 'Public presentation', 'historical_price_eur': 900}}
+        with self.assertRaises(ValueError):
+            normalize([{'category': 'Test', 'serbian': [entry]}])
+
     def test_invalid_urls_are_rejected_and_unknown_category_is_empty(self):
         for url in ('javascript:alert(1)', 'file:///private', 'https://user:secret@site.test'):
             with self.assertRaises(ValueError):

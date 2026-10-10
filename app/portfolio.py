@@ -81,10 +81,23 @@ def normalize(records):
                 if url in seen:
                     continue
                 seen.add(url)
-                result.append({'category': category, 'name': name, 'url': url,
-                               'market': str(entry.get('market', ''))[:100],
-                               'description': str(entry.get('whatIsItAbout', ''))[:600],
-                               'search_terms': str(entry.get('capturedTitle', ''))[:300]})
+                row = {'category': category, 'name': name, 'url': url,
+                       'market': str(entry.get('market', ''))[:100],
+                       'description': str(entry.get('whatIsItAbout', ''))[:600],
+                       'search_terms': str(entry.get('capturedTitle', ''))[:300]}
+                estimate = entry.get('current_estimate')
+                if estimate is not None:
+                    price = estimate.get('build_price_eur') if isinstance(estimate, dict) else None
+                    scope = estimate.get('scope') if isinstance(estimate, dict) else None
+                    if (type(price) is not int or not 90 <= price <= 1_000_000
+                            or estimate.get('currency') != 'EUR'
+                            or not isinstance(scope, str) or not 0 < len(scope.strip()) <= 600
+                            or estimate.get('historical_price_eur') is not None):
+                        raise ValueError('Portfolio contains an invalid current estimate.')
+                    row['current_estimate'] = {key: estimate[key] for key in
+                                               ('currency', 'build_price_eur', 'scope')}
+                    row['current_estimate']['historical_price_eur'] = None
+                result.append(row)
     return result
 
 

@@ -60,10 +60,9 @@ def main():
             raise ValueError('Owner settings changed during shutdown; do not overwrite them.')
         if db.execute("SELECT 1 FROM auto_reply_jobs WHERE state IN ('GENERATING','QUEUED','SUBMITTING','RETRY','REGENERATE','DRAFT')").fetchone():
             raise ValueError('New work arrived during shutdown. Restart and drain before retrying.')
-    files=['app/codex_replies.py','app/reply_voice.py','app/auto_replies.py','app/viber_inbox.py',
-           'app/client_descriptions.py','app/web_service.py','app/web_server.py','app/portfolio.py','web/viber.js',
-           'prompts/sajtolog-replies.txt','prompts/sajtolog-replies.example.txt','.gitignore',
-           'LOCAL-CONTROLLER.md','REPLY-VOICE.md','scripts/evaluate_reply_voice.py',
+    files=['app/codex_replies.py','app/reply_voice.py','app/portfolio.py','data/portfolio.json',
+           'prompts/sajtolog-replies.txt','prompts/sajtolog-replies.example.txt',
+           'REPLY-VOICE.md','scripts/evaluate_reply_voice.py','scripts/verify_approved_voice.py',
            'scripts/deploy_reply_voice.py']
     installed={}
     for name in files:

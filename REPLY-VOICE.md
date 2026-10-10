@@ -1,5 +1,42 @@
 # Natural Viber replies
 
+## Owner-approved update: 11 October 2026
+
+The owner approved complete simulated conversations as well as the short price tone.
+Viber generation explicitly uses `gpt-6.1-sol` at low reasoning, independently of
+the model chosen for an interactive Codex chat.
+The shared voice now follows the conversation stage: answer a simple question briefly,
+give a proposal when requested, and move an accepted offer to one useful next step.
+It avoids repeated package explanations, unnecessary intake questions, repeated link
+reminders and treating every turn as an invitation to pitch maintenance.
+
+The private live instructions contain the approved scope offers and known business
+terms. Three-day delivery for a simple site is already authorized, measured from
+confirmed advance payment; it does not need another owner approval. Unknown annual
+maintenance billing must account for the first free 30 days rather than inventing
+a first-year quote. Standalone hosting for a 45 EUR build has a known 20 EUR surcharge
+with an unspecified period; standalone terms for a 55 EUR build remain unspecified.
+
+Each of the 400 portfolio records includes a `current_estimate` with currency,
+creation price and a specific scope. These are current offers for similar work,
+not historical invoices or promises to recreate a proprietary enterprise backend.
+Changing to simpler functions changes the applicable offer; it does not grant an
+unrequested discount. Relevant estimates enter the model through the existing
+account-scoped context and `opis klijenta` retrieval.
+
+The production schema stays `reply`/`hold` with private `assumptions`; the simulation's
+`owner_question` fields are adapted to that existing dashboard workflow. Public
+client research remains available when useful. The rollout updates future drafting,
+preserves automatic delivery preferences, and does not replay completed sends.
+Public source contains an example prompt; live payment details and customer-specific
+test instructions remain in the ignored private prompt and local database.
+`scripts/verify_approved_voice.py` exercises the actual production generator with
+synthetic clients, relevant catalog estimates, short deadlines and a private annual
+billing question. It never contacts Viber; reports remain in `benchmark-results/`.
+The [rollout verification](docs/approved-voice-rollout.json) records 247 passing unit
+tests, one skipped test, 26 passing real-model scenarios, and the live controller
+returning to WATCHING with automatic delivery enabled. No Viber test messages were sent.
+
 The new voice answers the customer's question directly, keeps routine turns short,
 and uses context rather than a repeated greeting, empathy sentence and closing
 question. "Razumem" is allowed for a genuine concern, but is omitted if it occurred
