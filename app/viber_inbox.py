@@ -8,10 +8,11 @@ import sqlite3
 import time
 
 from app.viber_database import DatabaseReadError, international_phone
+from app.storage import connect
 
 
 def utc_now():
-    return datetime.now(timezone.utc).isoformat(timespec='seconds')
+    return datetime.now(timezone.utc).isoformat(timespec='microseconds')
 
 
 def message_hash(message):
@@ -20,9 +21,25 @@ def message_hash(message):
     return hashlib.sha256(json.dumps([message[k] for k in keys], ensure_ascii=True).encode()).hexdigest()
 
 
+def outgoing_token_assigned(old, message):
+    """Viber replaces a pending outbound token/ordering zero on server ack."""
+    # A pending row can inherit the previous event's nonzero sort order.
+    # The pending token, verified sender, unchanged body and timestamp boundary
+    # distinguish its acknowledgement from reuse of a finalized event ID.
+    return (old['token'] in (None, '0')
+            and message['token'] not in (None, '0')
+            and old['direction'] == message['direction'] == 'OUTGOING'
+            and old['sender_verified'] and message['sender_verified']
+            and old['message_type'] == message['message_type']
+            and message['message_type'] in (1, 9)  # Plain text or text containing a link.
+            and all(old[key] == message[key] for key in ('chat_id','sender_id','body'))
+            and abs(old['timestamp_ms']-message['timestamp_ms']) <= 300_000)
+
+
 class InboxStore:
     def __init__(self, path):
         self.path = path
+        self.accounts = None
         with closing(self.connect()) as db, db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS viber_sources (
@@ -47,13 +64,12 @@ class InboxStore:
             ''')
 
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=30)
-        db.row_factory = sqlite3.Row
-        return db
+        return connect(self.path)
 
     def checkpoints(self):
         with closing(self.connect()) as db:
-            return {row['source_id']: row['checkpoint'] for row in db.execute('SELECT * FROM viber_sources')}
+            where = ' WHERE source_id IN (SELECT source_id FROM account_sources WHERE account_id=?)' if self.accounts else ''
+            return {row['source_id']: row['checkpoint'] for row in db.execute('SELECT * FROM viber_sources'+where,(self.accounts.account_id,) if self.accounts else ())}
 
     def ingest(self, snapshot):
         if snapshot.get('unchanged'):
@@ -75,7 +91,10 @@ class InboxStore:
             old_chats = {row['chat_id']: row for row in db.execute(
                 'SELECT * FROM viber_conversations WHERE source_id=?', (source,))}
             recent_outreach = self._recent_outreach_cutoffs(db, now_ms)
-            db.execute('UPDATE viber_conversations SET active=0')
+            if self.accounts:
+                db.execute('UPDATE viber_conversations SET active=0 WHERE source_id IN (SELECT source_id FROM account_sources WHERE account_id=?)',(self.accounts.account_id,))
+            else:
+                db.execute('UPDATE viber_conversations SET active=0')
             chats = {chat['chat_id']: chat for chat in snapshot['chats']}
             for chat in chats.values():
                 old = old_chats.get(chat['chat_id'])
@@ -97,12 +116,16 @@ class InboxStore:
                     raise DatabaseReadError('Ambiguous Viber message identity. Detection is paused.')
                 seen.add(event_id)
                 old = existing.get(event_id)
-                if old and (old['chat_id'] != chat_id or old['token'] != message['token']):
+                if old and (old['chat_id'] != chat_id or
+                            (old['token'] != message['token'] and not outgoing_token_assigned(old,message))):
                     raise DatabaseReadError('Viber message IDs were reused. Detection is paused; rebaseline required.')
                 digest = message_hash(message)
                 if old and old['content_hash'] == digest and not old['deleted']:
                     continue
                 baseline = not previous or chat_id not in old_chats or not old_chats[chat_id]['active']
+                if previous and snapshot.get('incoming_since_ms') and message['event_id']>previous['checkpoint'] and message['timestamp_ms']>=snapshot['incoming_since_ms'] and chat_id not in old_chats:
+                    baseline = False
+                    db.execute('UPDATE viber_conversations SET monitor_since_ms=? WHERE source_id=? AND chat_id=?',(snapshot['incoming_since_ms'],source,chat_id))
                 if old:
                     baseline = bool(old['baseline'])
                     # Editing or deleting an existing message never creates a
@@ -131,7 +154,7 @@ class InboxStore:
                      deleted,first_seen_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)
                     ON CONFLICT(source_id,event_id) DO UPDATE SET
                      sender_id=excluded.sender_id,direction=excluded.direction,
-                     timestamp_ms=excluded.timestamp_ms,sort_order=excluded.sort_order,
+                     timestamp_ms=excluded.timestamp_ms,token=excluded.token,sort_order=excluded.sort_order,
                      message_type=excluded.message_type,body=excluded.body,client_flag=excluded.client_flag,
                      sender_verified=excluded.sender_verified,content_hash=excluded.content_hash,
                      detection=excluded.detection,deleted=0,updated_at=excluded.updated_at''',
@@ -191,6 +214,14 @@ class InboxStore:
 
     def status(self):
         with closing(self.connect()) as db:
+            if self.accounts:
+                account = (self.accounts.account_id,)
+                scope = 'source_id IN (SELECT source_id FROM account_sources WHERE account_id=?)'
+                return {'conversations':db.execute('SELECT count(*) FROM viber_conversations WHERE active=1 AND '+scope,account).fetchone()[0],
+                        'messages':db.execute('SELECT count(*) FROM viber_messages WHERE '+scope,account).fetchone()[0],
+                        'new_incoming':db.execute("SELECT count(*) FROM viber_messages m JOIN viber_conversations c USING(source_id,chat_id) WHERE m.detection='NEW_INCOMING' AND c.active=1 AND c."+scope,account).fetchone()[0],
+                        'last_poll':db.execute('SELECT MAX(last_poll) FROM viber_sources WHERE '+scope,account).fetchone()[0],
+                        'automatic_replies':False}
             return {'conversations': db.execute('SELECT count(*) FROM viber_conversations WHERE active=1').fetchone()[0],
                     'messages': db.execute('SELECT count(*) FROM viber_messages').fetchone()[0],
                     'new_incoming': db.execute("SELECT count(*) FROM viber_messages m JOIN viber_conversations c "
@@ -202,13 +233,14 @@ class InboxStore:
         if type(offset) is not int or offset < 0:
             raise ValueError('Invalid conversation offset.')
         with closing(self.connect()) as db:
+            scope = ' AND EXISTS(SELECT 1 FROM contact_owners o JOIN account_sources s ON s.account_id=o.account_id WHERE o.phone=c.phone AND s.source_id=c.source_id AND o.account_id=?)' if self.accounts else ''
             rows = db.execute('''SELECT c.*,
                 (SELECT MAX(timestamp_ms) FROM viber_messages m WHERE m.source_id=c.source_id
                  AND m.chat_id=c.chat_id AND m.deleted=0) AS last_timestamp_ms,
                 (SELECT count(*) FROM viber_messages m WHERE m.source_id=c.source_id
                  AND m.chat_id=c.chat_id AND m.detection='NEW_INCOMING') AS new_incoming
-                FROM viber_conversations c WHERE active=1 ORDER BY last_timestamp_ms DESC,chat_id
-                LIMIT ? OFFSET ?''', (limit, offset)).fetchall()
+                FROM viber_conversations c WHERE active=1''' + scope + ''' ORDER BY last_timestamp_ms DESC,chat_id
+                LIMIT ? OFFSET ?''', ([self.accounts.account_id] if self.accounts else []) + [limit,offset]).fetchall()
             leads = list(db.execute('SELECT id,phone,company_name FROM leads ORDER BY id'))
         result = []
         for row in rows:
@@ -227,6 +259,8 @@ class InboxStore:
                               (source, chat_id)).fetchone()
             if not chat:
                 raise ValueError('Conversation not found in the active Viber profile.')
+            if self.accounts:
+                self.accounts.assert_phone(chat['phone'])
             where, parameters = '', [source, chat_id]
             if before is not None:
                 cursor = db.execute('SELECT timestamp_ms,COALESCE(sort_order,0),event_id FROM viber_messages '
@@ -249,6 +283,8 @@ class InboxStore:
     def monitor(self, source, chat_id, enabled):
         if type(enabled) is not bool or type(chat_id) is not int:
             raise ValueError('Choose whether to monitor this conversation.')
+        if self.accounts:
+            self.conversation(source,chat_id)
         with closing(self.connect()) as db, db:
             changed = db.execute('UPDATE viber_conversations SET monitoring=?,monitor_since_ms=?,revision=revision+1 '
                                  'WHERE source_id=? AND chat_id=? AND active=1', (int(enabled), int(time.time() * 1000), source, chat_id))

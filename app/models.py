@@ -1,4 +1,4 @@
-"""Lead and message models, plus the small SQLite contact ledger."""
+"""Lead and message models, plus the dashboard contact ledger."""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -6,6 +6,20 @@ from contextlib import closing
 from pathlib import Path
 import sqlite3
 from typing import Callable
+from app.storage import connect, postgres
+
+
+def validate_company_name(company: str) -> str:
+    if not isinstance(company, str) or not company.strip():
+        raise ValueError("Enter the business name.")
+    if any(ord(c) < 32 for c in company):
+        raise ValueError("Company name cannot contain control characters.")
+    company = " ".join(company.split())
+    if "|" in company:
+        raise ValueError("Company name cannot contain '|'.")
+    if len(company) > 120:
+        raise ValueError("Company name is too long (maximum 120 characters).")
+    return company
 
 
 @dataclass(frozen=True)
@@ -26,8 +40,9 @@ class Message:
 
 class LeadStore:
     def __init__(self, path: str | Path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = str(path) if postgres(path) else Path(path)
+        if not postgres(path):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as db:
             with db:
                 db.execute("""CREATE TABLE IF NOT EXISTS leads (
@@ -43,19 +58,11 @@ class LeadStore:
                     db.execute("ALTER TABLE leads ADD COLUMN viber_name TEXT")
 
     def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=30)
-        db.row_factory = sqlite3.Row
-        return db
+        return connect(self.path)
 
     def create_with_android(self, phone: str, company: str,
                             add_contact: Callable[[str, str], None]) -> Lead:
-        if any(ord(c) < 32 for c in company):
-            raise ValueError("Company name cannot contain control characters.")
-        company = " ".join(company.split())
-        if not company or "|" in company:
-            raise ValueError("Company name must be nonempty and cannot contain '|'.")
-        if len(company) > 120:
-            raise ValueError("Company name is too long (maximum 120 characters).")
+        company = validate_company_name(company)
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         db = self._connect()
         try:
@@ -65,15 +72,32 @@ class LeadStore:
                 "VALUES (?, ?, ?, ?)", (phone, company, "pending", created_at))
             lead_id = row.lastrowid
             name = f"{company} | SJT-{lead_id}"
+            db.commit()  # Never hold a database transaction while operating Android.
             add_contact(name, phone)  # Must verify creation or raise.
             db.execute("UPDATE leads SET contact_name = ? WHERE id = ?", (name, lead_id))
             db.commit()
             return Lead(lead_id, phone, company, None, name, created_at)
         except Exception:
             db.rollback()
+            if 'lead_id' in locals():
+                db.execute("DELETE FROM leads WHERE id=? AND contact_name='pending'", (lead_id,))
+                db.commit()
             raise
         finally:
             db.close()
+
+    def create_verified(self, phone: str, company: str, viber_name: str, db) -> Lead:
+        """Save a desktop-verified contact in the caller's ownership transaction."""
+        company = validate_company_name(company)
+        if db.execute("SELECT 1 FROM leads WHERE phone=?", (phone,)).fetchone():
+            raise ValueError("This phone number is already in your contact ledger.")
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        row = db.execute(
+            "INSERT INTO leads(phone,company_name,viber_name,contact_name,created_at) VALUES(?,?,?,?,?)",
+            (phone, company, viber_name, company, created_at))
+        contact_name = f"{company} | SJT-{row.lastrowid}"
+        db.execute("UPDATE leads SET contact_name=? WHERE id=?", (contact_name, row.lastrowid))
+        return Lead(row.lastrowid, phone, company, viber_name, contact_name, created_at)
 
     def get(self, lead_id: int) -> Lead | None:
         with closing(self._connect()) as db:

@@ -13,6 +13,7 @@ import re
 import time
 
 from app.viber import ViberClient, ViberError
+from app.reply_errors import ViberRetryable
 
 
 _USER32 = ctypes.windll.user32 if hasattr(ctypes, "windll") else None
@@ -46,7 +47,14 @@ class BackgroundViberClient:
         self.ui.connect()
         self.window = self.ui.window
         if _USER32.IsIconic(self.window.handle):
-            raise ViberError("Restore Viber behind your other windows before using background mode.")
+            if not self.allow_foreground:
+                raise ViberError("Restore Viber behind your other windows before using background mode.")
+            _USER32.ShowWindow(self.window.handle, 9)  # Restore only inside the isolated VM.
+            deadline=time.monotonic()+2
+            while _USER32.IsIconic(self.window.handle):
+                if time.monotonic()>=deadline:
+                    raise ViberRetryable('Viber could not be restored in its VM.', 'window_minimized')
+                time.sleep(.05)
         return self
 
     def _nodes(self):
@@ -55,7 +63,8 @@ class BackgroundViberClient:
     def _one(self, label: str, predicate):
         matches = [node for node in self._nodes() if predicate(node)]
         if len(matches) != 1:
-            raise ViberError(f"Expected one {label}; found {len(matches)}. No message was sent.")
+            error = ViberRetryable if not matches else ViberError
+            raise error(f"Expected one {label}; found {len(matches)}. No message was sent.")
         return matches[0]
 
     def _assert_no_focus_theft(self):
@@ -166,7 +175,7 @@ class BackgroundViberClient:
             name = pytesseract.image_to_string(
                 self._capture_header(), lang="eng+srp_latn", config="--psm 7").strip()
         except (OSError, RuntimeError) as exc:
-            raise ViberError(f"Could not read the background Viber header: {exc}") from exc
+            raise ViberRetryable(f"Could not read the background Viber header: {exc}", 'header_unavailable') from exc
         self._assert_no_focus_theft()
         return " ".join(name.split())
 
@@ -180,26 +189,14 @@ class BackgroundViberClient:
         if not re.fullmatch(r"\+\d{7,15}", phone):
             raise ViberError("A full international phone number is required.")
         self._dismiss_obscuring_info_popup()
-        profile = self._one("profile button", lambda n:
-                            self.ui._type(n) == "CheckBox" and
-                            "ProfileButton_" in self.ui._auto_id(n))
-        self._click(profile)
-        time.sleep(.1)
-        dial = self._one("Use dial pad button", lambda n:
-                         self.ui._type(n) == "Button" and
-                         self.ui._name(n) == "Use dial pad")
-        self._click(dial)
-        time.sleep(.1)
-        popup = self._one("dial pad", lambda n:
-                          self.ui._auto_id(n).endswith("ProfilePopup") and
-                          any(self.ui._type(child) == "Edit" for child in n.children()))
+        popup = self._open_dial_pad()
         children = popup.children()
         fields = [n for n in children if self.ui._type(n) == "Edit"]
         keys = sorted((n for n in children if self.ui._type(n) == "Button" and
                        "RoundIconButton_" in self.ui._auto_id(n)),
                       key=lambda n: (n.rectangle().top, n.rectangle().left))
         if len(fields) != 1 or len(keys) != 12:
-            raise ViberError("Dial pad controls changed; no message was sent.")
+            raise ViberRetryable("Dial pad controls changed; no message was sent.", 'dial_pad_not_ready')
         field = fields[0]
         if field.get_value():
             clear = [n for n in children if self.ui._type(n) == "Button" and
@@ -207,22 +204,60 @@ class BackgroundViberClient:
             if len(clear) != 1:
                 raise ViberError("Could not clear the dial pad; no message was sent.")
             self._click(clear[0])
-        if field.get_value():
-            raise ViberError("Dial pad was not cleared; no message was sent.")
+        if not self._wait_value(field, '', timeout=.5):
+            raise ViberRetryable("Dial pad was not cleared; no message was sent.", 'dial_pad_readback')
         self._click(keys[10], hold=1.2)  # Long press 0 enters +.
-        if field.get_value() != "+":
-            raise ViberError("Could not enter the international prefix.")
+        if not self._wait_value(field, '+', timeout=.5):
+            raise ViberRetryable("Could not enter the international prefix.", 'dial_pad_readback')
         keymap = dict(zip(_PAD, keys))
         for index, digit in enumerate(phone[1:], 1):
             self._click(keymap[digit])
-            if field.get_value() != phone[:index + 1]:
-                raise ViberError("Dial pad number differed from the lead; no message was sent.")
+            if not self._wait_value(field, phone[:index + 1], timeout=.5):
+                raise ViberRetryable("Dial pad number differed from the lead; no message was sent.", 'dial_pad_readback')
         actions = sorted((n for n in children if self.ui._type(n) == "Button" and
                           "SmallIconButton_" in self.ui._auto_id(n)),
                          key=lambda n: n.rectangle().left)
         if len(actions) != 2 or not actions[1].is_enabled():
-            raise ViberError("The dial pad message button is unavailable.")
+            raise ViberRetryable("The dial pad message button is unavailable.", 'dial_pad_not_ready')
         self._click(actions[1])  # Right button is Message on the tested build.
+
+    def _open_dial_pad(self):
+        """Resume an existing menu/dial pad instead of toggling its hidden button.
+
+        Qt can expose only popup controls while the profile menu is open. A
+        previous interrupted recipient-open must not require the obscured
+        profile button again. Every later number/recipient check still runs.
+        """
+        deadline = time.monotonic() + 3
+        clicked_profile = False
+        clicked_dial = False
+        while time.monotonic() < deadline:
+            nodes = self._nodes()
+            pads = [n for n in nodes if self.ui._auto_id(n).endswith('ProfilePopup')
+                    and any(self.ui._type(child) == 'Edit' for child in n.children())]
+            if len(pads) > 1:
+                raise ViberError('Multiple Viber dial pads found. No message was sent.')
+            if pads:
+                return pads[0]
+            dials = [n for n in nodes if self.ui._type(n) == 'Button'
+                     and self.ui._name(n) == 'Use dial pad']
+            if len(dials) > 1:
+                raise ViberError('Multiple Use dial pad buttons found. No message was sent.')
+            if dials:
+                if not clicked_dial:
+                    self._click(dials[0])
+                    clicked_dial = True
+                time.sleep(.1)
+                continue
+            profiles = [n for n in nodes if self.ui._type(n) in ('CheckBox', 'Button')
+                        and 'ProfileButton_' in self.ui._auto_id(n)]
+            if len(profiles) > 1:
+                raise ViberError('Multiple Viber profile buttons found. No message was sent.')
+            if profiles and not clicked_profile and not clicked_dial:
+                self._click(profiles[0])
+                clicked_profile = True
+            time.sleep(.1)
+        raise ViberRetryable('Viber dial pad is not ready. Waiting before reopening the verified number. No message was sent.', 'dial_pad_not_ready')
 
     def open_phone(self, phone: str) -> str:
         if self.window is None:
@@ -246,7 +281,7 @@ class BackgroundViberClient:
             else:
                 repeats = 0
                 previous = name
-        raise ViberError("Viber did not expose a stable named chat for that number. No message was sent.")
+        raise ViberRetryable("Viber did not expose a stable named chat for that number. No message was sent.", 'header_unstable')
 
     def read_messages(self):
         return self.ui.read_messages()
@@ -258,6 +293,32 @@ class BackgroundViberClient:
             self._post(_WM_KEYUP, _VK_BACK)
         time.sleep(.15)
 
+    @staticmethod
+    def _wait_value(composer, expected, timeout=2):
+        deadline = time.monotonic() + timeout
+        while True:
+            value = composer.get_value()
+            if value == expected:
+                return True
+            # Wait only for our own prefix to finish arriving. Foreign text is
+            # not treated as a slow frame and is never silently overwritten.
+            if expected and not expected.startswith(value):
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(.05)
+
+    def _clear_owned_draft(self, expected, text, composer, length):
+        if not self.verify_current_name(expected):
+            raise ViberError('Recipient changed while preparing text; the draft was left unsent for review.')
+        value = composer.get_value()
+        if value and not text.startswith(value):
+            raise ViberError('Draft contains unexpected text; it was left unsent for review.')
+        # Erase all posted characters, including those still in Qt's queue.
+        self._erase_draft(length)
+        if not self._wait_value(composer, ''):
+            raise ViberError('The unsent draft could not be cleared. Check Viber before retrying.')
+
     def prepare_message(self, text: str) -> None:
         """Type and verify a draft without pressing Send."""
         if self.prepared is not None:
@@ -267,35 +328,40 @@ class BackgroundViberClient:
         if any(ord(char) < 32 or ord(char) > 0xFFFF for char in text):
             raise ViberError("Background typing supports plain text without controls or emoji.")
         if not self.expected_name or not self.verify_current_name(self.expected_name):
-            raise ViberError("Conversation changed; no message was sent.")
+            raise ViberRetryable("Conversation header changed before typing. No message was sent.", 'header_unstable')
         composer = self.ui._composer()
         if composer.get_value():
             raise ViberError("Viber already has an unsent draft; no message was sent.")
-        self._click(composer)
         units = text.encode("utf-16-le")
-        for offset in range(0, len(units), 2):
-            self._post(_WM_CHAR, int.from_bytes(units[offset:offset + 2], "little"))
-        time.sleep(.2)
-        if composer.get_value() != text or not self.verify_current_name(self.expected_name):
-            self._erase_draft(len(units) // 2)
-            if composer.get_value():
-                raise ViberError("Send aborted; a draft remains in Viber. Clear it manually.")
-            raise ViberError("Send aborted because the draft or recipient changed.")
-        send = self._one("message send button", lambda n:
-                         self.ui._type(n) == "Button" and
-                         self.ui._auto_id(n).endswith("SendToolbarButton"))
-        if not send.is_enabled():
-            raise ViberError("Viber send button is unavailable; draft remains unsent.")
-        self._assert_no_focus_theft()
+        failure_code = 'draft_prepare_failed'
+        try:
+            self._click(composer)
+            for offset in range(0, len(units), 2):
+                self._post(_WM_CHAR, int.from_bytes(units[offset:offset + 2], "little"))
+            failure_code = 'draft_readback'
+            if not self._wait_value(composer, text):
+                raise ViberError('Typed text did not match the requested reply.')
+            failure_code = 'header_unstable'
+            if not self.verify_current_name(self.expected_name):
+                raise ViberError('Recipient header was unstable after typing.')
+            failure_code = 'send_control_not_ready'
+            send = self._one("message send button", lambda n:
+                             self.ui._type(n) == "Button" and
+                             self.ui._auto_id(n).endswith("SendToolbarButton"))
+            if not send.is_enabled():
+                raise ViberError('Viber send button is not ready.')
+            self._assert_no_focus_theft()
+        except Exception as exc:
+            self._clear_owned_draft(self.expected_name, text, composer, len(units) // 2)
+            raise ViberRetryable(f'{exc} Owned draft cleared; no Send click occurred.', failure_code) from exc
         self.prepared = (self.expected_name, text, composer, send, len(units) // 2)
 
     def cancel_prepared(self) -> None:
         if self.prepared is None:
             return
         expected, text, composer, _send, length = self.prepared
+        self._clear_owned_draft(expected, text, composer, length)
         self.prepared = None
-        if self.verify_current_name(expected) and composer.get_value() == text:
-            self._erase_draft(length)
 
     def dispatch_prepared(self) -> None:
         if self.prepared is None:

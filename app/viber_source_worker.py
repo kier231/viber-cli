@@ -84,6 +84,19 @@ class QtViberSource:
         self.query('PRAGMA query_only=ON')
         validate_schema(self.query)
         self.last_version = None
+        self.last_scan_at = float('-inf')
+
+    def _storage_version(self):
+        # Some Viber Qt driver builds keep data_version unchanged after a WAL
+        # write. Observe the files as well, with a bounded full-read fallback.
+        versions = []
+        for path in (self.path, Path(str(self.path)+'-wal'), Path(str(self.path)+'-shm')):
+            try:
+                stat = path.stat()
+                versions.append((stat.st_mtime_ns, stat.st_size))
+            except FileNotFoundError:
+                versions.append(None)
+        return tuple(versions)
 
     def query(self, sql, parameters=()):
         query = self.QSqlQuery(self.db)
@@ -110,16 +123,22 @@ class QtViberSource:
             self.viber_process = find_viber_process(self.executable)
         if source_identity(self.path) != self.identity:
             raise DatabaseReadError('Viber profile was replaced. Restart the reader to create a new baseline.')
-        version = (self.query('PRAGMA data_version')[0]['data_version'], tuple(sorted(request['phones'])))
-        if version == self.last_version:
+        version = (self.query('PRAGMA data_version')[0]['data_version'], self._storage_version(),
+                   tuple(sorted(request['phones'])),request.get('include_new_senders',False),request.get('incoming_since_ms',0))
+        now = time.monotonic()
+        if (not request.get('force_refresh') and version == self.last_version
+                and now-getattr(self,'last_scan_at',float('-inf')) < 1):
             return {'source_id': self.identity, 'unchanged': True}
         self.query('BEGIN')
         try:
             result = read_snapshot(self.query, source_id=self.identity,
                                    own_phone=self.path.parent.name, phones=request['phones'],
-                                   after_event_id=int(request.get('checkpoints', {}).get(self.identity, 0)))
+                                   after_event_id=int(request.get('checkpoints', {}).get(self.identity, 0)),
+                                   include_new_senders=request.get('include_new_senders',False),
+                                   incoming_since_ms=request.get('incoming_since_ms',0))
             self.query('COMMIT')
             self.last_version = version
+            self.last_scan_at = now
             return result
         except Exception:
             self.query('ROLLBACK')

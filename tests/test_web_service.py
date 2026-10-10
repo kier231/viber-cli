@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest.mock import Mock, patch
 
 from app.models import Message
 from app.viber import ViberError
@@ -73,6 +74,50 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(lead.viber_name, "Viber Person")
         self.assertEqual(FakeDesktop.sent, [])
 
+    def test_add_contact_verifies_viber_without_android_or_sending(self):
+        self.service.android_add = Mock(side_effect=AssertionError("Android must not be called"))
+        result = self.completed(self.service.add_contact({"phone": "065 123 4567", "company_name": "  New   Salon  "}))
+        self.assertEqual(result['state'], 'SUCCEEDED', result['error'])
+        lead = self.service.store.get(result['result']['id'])
+        self.assertEqual((lead.phone, lead.company_name, lead.viber_name),
+                         ('+381651234567', 'New Salon', 'Viber Person'))
+        self.assertEqual(lead.contact_name, f'New Salon | SJT-{lead.id}')
+        self.service.android_add.assert_not_called()
+        self.assertEqual(FakeDesktop.sent, [])
+        self.assertEqual(self.service.records('sent'), [])
+
+    def test_unusable_or_changed_recipient_is_not_saved(self):
+        for name in ('Unknown', 'My Notes', 'not on Viber'):
+            FakeDesktop.name = name
+            result = self.completed(self.service.add_contact({'phone': '0651234567', 'company_name': 'Salon'}))
+            self.assertEqual(result['state'], 'FAILED')
+        FakeDesktop.name = 'Viber Person'
+        with patch.object(FakeDesktop, 'verify_current_name', side_effect=[True, False]):
+            result = self.completed(self.service.add_contact({'phone': '0651234567', 'company_name': 'Salon'}))
+        self.assertEqual(result['state'], 'FAILED')
+        self.assertEqual(len(self.service.contacts()), 1)
+        self.assertEqual(FakeDesktop.sent, [])
+
+    def test_invalid_contact_input_never_opens_viber(self):
+        with patch.object(FakeDesktop, 'open_phone') as opened:
+            for company in (None, '', ' ', 'bad|name', 'bad\nname', 'x' * 121):
+                with self.assertRaises(ValueError):
+                    self.service.add_contact({'phone': '0651234567', 'company_name': company})
+            with self.assertRaises(ValueError):
+                self.service.add_contact({'phone': '123', 'company_name': 'Salon'})
+            with self.assertRaises(ValueError):
+                self.service.add_contact({'phone': self.lead.phone, 'company_name': 'Duplicate'})
+            opened.assert_not_called()
+
+    def test_queued_duplicate_additions_save_one_contact(self):
+        payload = {'phone': '0651234567', 'company_name': 'Salon'}
+        with patch.object(self.service, '_check_new_contact'):
+            tasks = [self.service.add_contact(payload), self.service.add_contact(payload)]
+        results = [self.completed(task) for task in tasks]
+        self.assertEqual(sorted(result['state'] for result in results), ['FAILED', 'SUCCEEDED'])
+        self.assertEqual(len([lead for lead in self.service.contacts() if lead['phone'] == '+381651234567']), 1)
+        self.assertEqual(FakeDesktop.sent, [])
+
     def test_confirmation_required_and_retry_never_sends_twice(self):
         preview = self.preview()
         payload = self.payload(preview)
@@ -101,13 +146,39 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(self.service.records("sent"), [])
         self.assertEqual(FakeDesktop.sent, [])
 
-    def test_changed_viber_header_after_review_blocks_send(self):
+    def test_saved_name_mismatch_does_not_block_verified_number(self):
+        self.service.store.set_viber_name(self.lead.id, 'Mihajlo')
+        FakeDesktop.name = 'Brt'
+        with patch.object(FakeDesktop,'open_phone',autospec=True,side_effect=lambda _client, phone: FakeDesktop.name) as opened:
+            preview = self.preview()
+        self.assertEqual(opened.call_args.args[1],self.lead.phone)
+        self.assertEqual(preview['viber_name'],'Brt')
+        self.assertEqual(preview['lead']['viber_name'],'Mihajlo')
+        self.assertEqual(FakeDesktop.sent,[])
+
+    def test_changed_display_name_after_review_sends_to_same_phone(self):
         preview = self.preview()
-        FakeDesktop.name = "Different person"
+        FakeDesktop.name = "New display name"
         result = self.completed(self.service.send(self.payload(preview)))
+        self.assertEqual(result['state'],'SUCCEEDED',result['error'])
+        self.assertEqual(self.service.records('sent')[0]['viber_name'],'New display name')
+        self.assertEqual(FakeDesktop.sent,[preview['text']])
+
+    def test_unstable_open_conversation_still_blocks_send(self):
+        preview = self.preview()
+        with patch.object(FakeDesktop,'verify_current_name',return_value=False):
+            result = self.completed(self.service.send(self.payload(preview)))
         self.assertEqual(result["state"], "FAILED")
         self.assertEqual(self.service.records("sent")[0]["state"], "BLOCKED")
         self.assertEqual(FakeDesktop.sent, [])
+
+    def test_saved_phone_change_after_review_still_blocks_send(self):
+        preview = self.preview()
+        with closing(self.service.store._connect()) as db,db:
+            db.execute('UPDATE leads SET phone=? WHERE id=?',('+381641111112',self.lead.id))
+        with self.assertRaisesRegex(ValueError,'changed after review'):
+            self.service.send(self.payload(preview))
+        self.assertEqual(FakeDesktop.sent,[])
 
     def test_uncertain_send_is_recorded_and_never_retried(self):
         preview = self.preview()
@@ -133,7 +204,7 @@ class WebServiceTests(unittest.TestCase):
 
     def test_restart_marks_interrupted_attempt_unknown(self):
         with closing(self.service.store._connect()) as db, db:
-            db.execute("INSERT INTO web_operations VALUES('interrupted','send','RUNNING',?,NULL,NULL)", ("2026-01-01",))
+            db.execute("INSERT INTO web_operations(id,kind,state,created_at,result,error) VALUES('interrupted','send','RUNNING',?,NULL,NULL)", ("2026-01-01",))
             db.execute("INSERT INTO web_sends(id,request_key,preview_hash,operation_id,lead_id,phone,company_name,"
                        "viber_name,text,state,created_at,updated_at,error) VALUES('s','k','h','interrupted',1,'+381641234567',"
                        "'Business','Person','Text','SUBMITTING','2026-01-01','2026-01-01',NULL)")

@@ -14,15 +14,18 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 
-from app.android_contacts import add_android_contact, _find_adb
+from app.android_contacts import add_android_contact
 from app.campaigns import CampaignManager, init_campaign_schema, same_recipient
-from app.models import LeadStore
+from app.models import LeadStore, validate_company_name
 from app.phone import normalize_serbian_phone
 from app.scheduling import parse_schedule, MAX_LATENESS_SECONDS, TIME_ZONE
 from app.viber import ViberError
 from app.viber_background import BackgroundViberClient, _usable_viber_name
 from app.viber_watcher import DatabaseWatcher, WorkerSource
 from app.auto_replies import AutoReplies
+from app.storage import postgres
+from app.accounts import Accounts
+from app.job_queue import DesktopQueue, JobQueue
 
 
 def now():
@@ -44,19 +47,35 @@ class MissedSchedule(ViberError):
 class WebService:
     def __init__(self, path, client_factory=BackgroundViberClient,
                  android_add=add_android_contact, start_scheduler=False,
-                 source_factory=WorkerSource):
+                 source_factory=WorkerSource, managed=None, account_id='current',
+                 identity_snapshot=None, generation_limit=None):
+        self.managed = postgres(path) if managed is None else managed
+        self.account_id = account_id
+        self.generation_limit = generation_limit or threading.BoundedSemaphore(2)
+        self.accounts = None
         self.store = LeadStore(path)
+        self.controller_guard = None
+        if self.managed:
+            self.controller_guard = self.store._connect()
+            if getattr(self.controller_guard,'dialect',None)=='postgresql':
+                acquired = self.controller_guard.execute("SELECT pg_try_advisory_lock(hashtext(current_schema() || ':controller:' || ?))",(account_id,)).fetchone()[0]
+                self.controller_guard.commit()
+                if not acquired:
+                    self.controller_guard.close()
+                    raise ValueError('The previous account controller is still running.')
         self.watcher = DatabaseWatcher(self.store, source_factory=source_factory)
         self.client_factory = client_factory
         self.android_add = android_add
         self.lock = threading.RLock()
-        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viber-desktop")
+        self.pool = None
         self.previews = {}
         self.pending = 0
         self.closed = False
         self.scheduler_stop = threading.Event()
         self.scheduler = None
         self.campaigns = CampaignManager(self)
+        if self.managed:
+            self.accounts = Accounts(self.store.path, account_id)
         with closing(self.store._connect()) as db, db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS web_operations (
@@ -81,15 +100,39 @@ class WebService:
                 if column not in columns:
                     db.execute(f"ALTER TABLE web_sends ADD COLUMN {column} TEXT")
             init_campaign_schema(db)
+            if 'account_id' not in {r[1] for r in db.execute('PRAGMA table_info(web_operations)')}:
+                db.execute("ALTER TABLE web_operations ADD COLUMN account_id TEXT NOT NULL DEFAULT 'current'")
+            if 'account_id' not in {r[1] for r in db.execute('PRAGMA table_info(web_events)')}:
+                db.execute("ALTER TABLE web_events ADD COLUMN account_id TEXT NOT NULL DEFAULT 'current'")
+            recovery = " AND NOT EXISTS(SELECT 1 FROM controller_jobs j WHERE j.operation_id=web_operations.id AND j.state='PENDING')" if self.managed else ''
+            if self.managed:
+                JobQueue(self.store.path)
             db.execute("UPDATE web_operations SET state='INTERRUPTED', "
                        "error='The app stopped during this operation. Review Sent before trying again.' "
-                       "WHERE state IN ('QUEUED', 'RUNNING')")
+                       "WHERE state IN ('QUEUED', 'RUNNING')" + recovery + (" AND account_id=?" if self.managed else ''), (account_id,) if self.managed else ())
             db.execute("UPDATE web_sends SET state='UNKNOWN', updated_at=?, "
                        "error='The app stopped during this attempt. Check Viber manually; do not resend automatically.' "
-                       "WHERE state IN ('QUEUED', 'SUBMITTING')", (now(),))
-            for campaign in db.execute("SELECT id FROM web_campaigns WHERE state='ACTIVE'").fetchall():
+                       "WHERE state IN ('QUEUED', 'SUBMITTING')" + (" AND NOT EXISTS(SELECT 1 FROM controller_jobs j WHERE j.operation_id=web_sends.operation_id AND j.state='PENDING') AND phone IN (SELECT phone FROM contact_owners WHERE account_id=?)" if self.managed else ''), (now(),account_id) if self.managed else (now(),))
+            for campaign in db.execute("SELECT id FROM web_campaigns WHERE state='ACTIVE'" + (" AND account_id=?" if self.managed else ''),(account_id,) if self.managed else ()).fetchall():
                 self.campaigns.reconcile(db, campaign["id"])
+        if self.managed:
+            try:
+                if identity_snapshot is None:
+                    self.accounts.bind_current()
+                else:
+                    self.accounts.bind_snapshot(identity_snapshot)
+            except BaseException:
+                self.watcher.close()
+                if getattr(self.controller_guard,'dialect',None)=='postgresql':
+                    self.controller_guard.execute("SELECT pg_advisory_unlock(hashtext(current_schema() || ':controller:' || ?))",(self.account_id,))
+                    self.controller_guard.commit()
+                self.controller_guard.close()
+                raise
+            self.watcher.accounts = self.accounts
+            self.watcher.inbox.accounts = self.accounts
         self.replies = AutoReplies(self)
+        self.watcher.on_ingest = self.replies.wake.set
+        self.pool = DesktopQueue(self) if self.managed else ThreadPoolExecutor(max_workers=1, thread_name_prefix='viber-desktop')
         if start_scheduler:
             self.start_scheduler()
 
@@ -111,33 +154,53 @@ class WebService:
         self.replies.close()
         self.pool.shutdown(wait=True)
         self.watcher.close()
+        if self.accounts:
+            self.accounts.stopped()
+        if self.controller_guard:
+            if getattr(self.controller_guard,'dialect',None)=='postgresql':
+                self.controller_guard.execute("SELECT pg_advisory_unlock(hashtext(current_schema() || ':controller:' || ?))",(self.account_id,))
+                self.controller_guard.commit()
+            self.controller_guard.close()
+            self.controller_guard = None
 
     def event(self, kind, detail):
         with closing(self.store._connect()) as db, db:
-            db.execute("INSERT INTO web_events(created_at,kind,detail) VALUES(?,?,?)",
-                       (now(), kind, detail))
+            db.execute("INSERT INTO web_events(created_at,kind,detail,account_id) VALUES(?,?,?,?)",
+                       (now(), kind, detail,self.account_id))
 
     def operation(self, operation_id):
         with closing(self.store._connect()) as db:
             row = db.execute("SELECT * FROM web_operations WHERE id=?", (operation_id,)).fetchone()
         if not row:
             raise ValueError("Operation not found.")
+        if self.managed and row['account_id'] != self.account_id:
+            raise PermissionError('Operation belongs to another account.')
         result = dict(row)
         result["result"] = json.loads(result["result"]) if result["result"] else None
         return result
 
-    def _enqueue(self, kind, work):
+    def _enqueue(self, kind, work, metadata=None):
         with self.lock:
             if self.closed:
                 raise ValueError("The localhost app is stopping.")
-            if self.pending >= 10:
-                raise ValueError("Viber has too many queued operations. Wait for them to finish.")
             operation_id = str(uuid.uuid4())
             with closing(self.store._connect()) as db, db:
-                db.execute("INSERT INTO web_operations(id,kind,state,created_at) VALUES(?,?,'QUEUED',?)",
-                           (operation_id, kind, now()))
+                db.execute("INSERT INTO web_operations(id,kind,state,created_at,account_id) VALUES(?,?,'QUEUED',?,?)",
+                           (operation_id, kind, now(),self.account_id))
+                if kind=='automatic-reply' and metadata and metadata.get('payload',{}).get('reply_job_id'):
+                    db.execute('UPDATE auto_reply_jobs SET operation_id=? WHERE id=?',
+                               (operation_id,metadata['payload']['reply_job_id']))
             self.pending += 1
-            self.pool.submit(self._run, operation_id, work)
+            try:
+                if self.managed:
+                    self.pool.submit(self._run, operation_id, work, metadata)
+                else:
+                    self.pool.submit(self._run, operation_id, work)
+            except Exception as exc:
+                self.pending -= 1
+                with closing(self.store._connect()) as db, db:
+                    db.execute("UPDATE web_operations SET state='FAILED',error=? WHERE id=?",(str(exc),operation_id))
+                raise
             return {"operation_id": operation_id}
 
     def _run(self, operation_id, work):
@@ -159,8 +222,11 @@ class WebService:
                            (str(exc), operation_id))
                 # An unexpected failure, including COM initialization, never retries a send.
                 db.execute("UPDATE web_sends SET state='UNKNOWN', error=?, updated_at=? "
-                           "WHERE operation_id=? AND state IN ('QUEUED','SUBMITTING')",
+                           "WHERE operation_id=? AND state IN ('QUEUED','SUBMITTING') AND attempted_at IS NOT NULL",
                            (str(exc), now(), operation_id))
+                db.execute("UPDATE web_sends SET state='BLOCKED', error=?, updated_at=? "
+                           "WHERE operation_id=? AND state='QUEUED' AND attempted_at IS NULL",
+                           (str(exc),now(),operation_id))
             self.event("ERROR", str(exc))
         finally:
             try:
@@ -183,39 +249,75 @@ class WebService:
         lead = self.store.get(lead_id)
         if not lead:
             raise ValueError("Contact not found.")
+        if self.accounts:
+            self.accounts.assert_phone(lead.phone)
         return lead
 
-    def _verified(self, lead_id):
+    def _verified(self, lead_id, before_open=None):
         lead = self.lead(lead_id)
         client = self.client_factory().connect()
+        if before_open:
+            before_open(client)
         name = client.open_phone(lead.phone)
         if not _usable_viber_name(name):
             raise ViberError("Viber did not show a usable recipient name. No message was sent.")
-        if lead.viber_name and name != lead.viber_name:
-            raise ViberError(f"Viber showed {name!r}; this contact stores {lead.viber_name!r}. No message was sent.")
+        # open_phone enters and reads back the exact international number.
+        # The stored display label can differ (nickname/profile rename); the
+        # live header remains a stability guard for this opened chat.
         if not lead.viber_name and lead.company_name not in name and "SJT-" not in name:
             self.store.set_viber_name(lead.id, name)
             lead = self.lead(lead.id)
         return client, lead, name
 
     def contacts(self):
-        return [asdict(lead) for lead in self.store.all()]
+        rows = self.store.all()
+        if self.accounts:
+            with closing(self.store._connect()) as db:
+                owned = {r[0] for r in db.execute('SELECT phone FROM contact_owners WHERE account_id=?', (self.accounts.account_id,))}
+            rows = [r for r in rows if r.phone in owned]
+        return [asdict(lead) for lead in rows]
 
     def add_contact(self, payload):
         phone = normalize_serbian_phone(payload.get("phone"))
-        company = payload.get("company_name")
-        if not isinstance(company, str) or not company.strip():
-            raise ValueError("Enter the business name.")
-        if any(lead.phone == phone for lead in self.store.all()):
-            raise ValueError("This phone number is already in your contact ledger.")
+        company = validate_company_name(payload.get("company_name"))
+        self._check_new_contact(phone)
         def work():
-            # Check again after earlier queued additions have completed.
-            if any(lead.phone == phone for lead in self.store.all()):
-                raise ValueError("This phone number is already in your contact ledger.")
-            lead = self.store.create_with_android(phone, company, self.android_add)
+            self._check_new_contact(phone)
+            if self.accounts:
+                self.accounts.authenticate(self.accounts.token, self.account_id,
+                                           self.accounts.worker_id, self.accounts.epoch)
+                if self.watcher.poll_once() is None:
+                    raise ViberError("The selected VM account could not be verified. Contact was not added.")
+            client = self.client_factory().connect()
+            name = client.open_phone(phone)
+            if not isinstance(name, str) or not name.strip() or not _usable_viber_name(name) or not client.verify_current_name(name):
+                raise ViberError("Viber did not verify a stable recipient for this number. Contact was not added.")
+            if self.accounts:
+                if self.watcher.poll_once() is None:
+                    raise ViberError("The selected VM account changed or is unavailable. Contact was not added.")
+                self.accounts.authenticate(self.accounts.token, self.account_id,
+                                           self.accounts.worker_id, self.accounts.epoch)
+            if not client.verify_current_name(name):
+                raise ViberError("The Viber recipient changed during verification. Contact was not added.")
+            # No database transaction is held while controlling Viber. Claim and
+            # insert commit together, so a failed addition cannot reserve a number.
+            with closing(self.store._connect()) as db, db:
+                db.execute('BEGIN IMMEDIATE')
+                if self.accounts:
+                    self.accounts.claim(phone, self.account_id, db)
+                lead = self.store.create_verified(phone, company, name, db)
             self.event("CONTACT_ADDED", f"Added contact #{lead.id}: {lead.company_name}.")
             return asdict(lead)
-        return self._enqueue("add-contact", work)
+        return self._enqueue("add-contact", work, {"phone": phone})
+
+    def _check_new_contact(self, phone):
+        with closing(self.store._connect()) as db:
+            if db.execute('SELECT 1 FROM leads WHERE phone=?', (phone,)).fetchone():
+                raise ValueError("This phone number is already in your contact ledger.")
+            if self.accounts:
+                owner = db.execute('SELECT account_id FROM contact_owners WHERE phone=?', (phone,)).fetchone()
+                if owner and owner[0] != self.account_id:
+                    raise PermissionError("This phone number belongs to another Viber account.")
 
     def set_name(self, lead_id, name):
         with self.lock:
@@ -223,7 +325,7 @@ class WebService:
                 raise ValueError("Wait for the current Viber operation before editing a name.")
             lead = self.lead(lead_id)
             self.store.set_viber_name(lead_id, name)
-            self.event("NAME_UPDATED", f"Saved Viber name for contact #{lead_id}; business and Android names preserved.")
+            self.event("NAME_UPDATED", f"Saved Viber name for contact #{lead_id}; business and saved contact names preserved.")
             return asdict(self.lead(lead.id))
 
     def open_contact(self, lead_id, read=False):
@@ -296,6 +398,8 @@ class WebService:
             with closing(self.store._connect()) as db:
                 existing = db.execute("SELECT * FROM web_sends WHERE request_key=?", (request_key,)).fetchone()
             if existing:
+                if self.accounts:
+                    self.accounts.assert_phone(existing['phone'])
                 if existing["preview_hash"] != token_hash:
                     raise ValueError("This submission key belongs to another message.")
                 return {"operation_id": existing["operation_id"], "send_id": existing["id"]}
@@ -307,25 +411,23 @@ class WebService:
                 raise ValueError("The scheduled time has passed. Choose a future time and review again.")
             if asdict(self.lead(preview["lead"]["id"])) != preview["lead"]:
                 raise ValueError("The saved contact changed after review. Review the message again.")
-            if self.pending >= 10:
-                raise ValueError("Wait for the queued Viber operations to finish.")
             send_id = str(uuid.uuid4())
             operation_id = str(uuid.uuid4())
             lead = preview["lead"]
             state = "SCHEDULED" if scheduled_at else "QUEUED"
             scheduled_result = {"send_id": send_id, "state": state, "scheduled_at": scheduled_at}
             with closing(self.store._connect()) as db, db:
-                db.execute("INSERT INTO web_operations(id,kind,state,created_at,result) VALUES(?,?,?,?,?)",
+                db.execute("INSERT INTO web_operations(id,kind,state,created_at,result,account_id) VALUES(?,?,?,?,?,?)",
                            (operation_id, "schedule" if scheduled_at else "send", "SUCCEEDED" if scheduled_at else "QUEUED",
-                            now(), json.dumps(scheduled_result) if scheduled_at else None))
+                            now(), json.dumps(scheduled_result) if scheduled_at else None,self.account_id))
                 db.execute("INSERT INTO web_sends(id,request_key,preview_hash,operation_id,lead_id,phone,company_name,"
                            "viber_name,text,state,created_at,updated_at,scheduled_at,lead_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (send_id, request_key, token_hash, operation_id, lead["id"], lead["phone"],
                             lead["company_name"], preview["viber_name"], preview["text"], state, now(), now(), scheduled_at,
                             json.dumps(lead, ensure_ascii=False)))
                 if scheduled_at:
-                    db.execute("INSERT INTO web_events(created_at,kind,detail) VALUES(?,?,?)",
-                               (now(), "SCHEDULED", f"Scheduled contact #{lead['id']}: {preview['viber_name']} at {scheduled_at}."))
+                    db.execute("INSERT INTO web_events(created_at,kind,detail,account_id) VALUES(?,?,?,?)",
+                               (now(), "SCHEDULED", f"Scheduled contact #{lead['id']}: {preview['viber_name']} at {scheduled_at}.",self.account_id))
             del self.previews[token]
             if not scheduled_at:
                 self.pending += 1
@@ -336,12 +438,17 @@ class WebService:
         if not isinstance(send_id, str):
             raise ValueError("Choose a scheduled message.")
         with self.lock, closing(self.store._connect()) as db, db:
+            if self.accounts:
+                existing = db.execute('SELECT phone FROM web_sends WHERE id=?',(send_id,)).fetchone()
+                if not existing:
+                    raise ValueError('Scheduled message not found.')
+                self.accounts.assert_phone(existing['phone'])
             row = db.execute("UPDATE web_sends SET state='CANCELLED', updated_at=? WHERE id=? AND state='SCHEDULED'",
                              (now(), send_id))
             if row.rowcount != 1:
                 raise ValueError("This message is no longer waiting. It may already be sending; check Scheduled and Sent.")
-            db.execute("INSERT INTO web_events(created_at,kind,detail) VALUES(?,?,?)",
-                       (now(), "SCHEDULE_CANCELLED", f"Cancelled scheduled message {send_id}."))
+            db.execute("INSERT INTO web_events(created_at,kind,detail,account_id) VALUES(?,?,?,?)",
+                       (now(), "SCHEDULE_CANCELLED", f"Cancelled scheduled message {send_id}.",self.account_id))
             campaign = db.execute("SELECT campaign_id FROM web_sends WHERE id=?", (send_id,)).fetchone()[0]
             if campaign:
                 db.execute("UPDATE web_campaigns SET revision=revision+1,updated_at=? WHERE id=?", (now(), campaign))
@@ -369,11 +476,12 @@ class WebService:
             task = None
             with closing(self.store._connect()) as db, db:
                 db.execute("BEGIN IMMEDIATE")
-                for campaign in db.execute("SELECT id FROM web_campaigns WHERE state='ACTIVE'").fetchall():
+                for campaign in db.execute("SELECT id FROM web_campaigns WHERE state='ACTIVE'" + (" AND account_id=?" if self.managed else ''),(self.account_id,) if self.managed else ()).fetchall():
                     self.campaigns.reconcile(db, campaign["id"])
                 rows = db.execute("SELECT s.* FROM web_sends s LEFT JOIN web_campaigns c ON s.campaign_id=c.id "
                                   "WHERE s.state='SCHEDULED' AND s.scheduled_at<=? AND (s.campaign_id IS NULL OR c.state='ACTIVE') "
-                                  "ORDER BY s.scheduled_at, s.created_at LIMIT 100", (current.isoformat(timespec="seconds"),)).fetchall()
+                                  + ("AND s.phone IN (SELECT phone FROM contact_owners WHERE account_id=?) " if self.managed else '') +
+                                  "ORDER BY s.scheduled_at, s.created_at LIMIT 100", (current.isoformat(timespec="seconds"),self.account_id) if self.managed else (current.isoformat(timespec="seconds"),)).fetchall()
                 for row in rows:
                     campaign_id = row["campaign_id"]
                     if campaign_id and self.campaigns._get(db, campaign_id)["state"] != "ACTIVE":
@@ -383,8 +491,8 @@ class WebService:
                         error = "More than 15 minutes overdue. No message was sent; create a new schedule if needed."
                         db.execute("UPDATE web_sends SET state='MISSED',error=?,updated_at=? WHERE id=?",
                                    (error, now(), row["id"]))
-                        db.execute("INSERT INTO web_events(created_at,kind,detail) VALUES(?,?,?)",
-                                   (now(), "SCHEDULE_MISSED", f"Missed scheduled message for contact #{row['lead_id']}."))
+                        db.execute("INSERT INTO web_events(created_at,kind,detail,account_id) VALUES(?,?,?,?)",
+                                   (now(), "SCHEDULE_MISSED", f"Missed scheduled message for contact #{row['lead_id']}.",self.account_id))
                         if campaign_id:
                             self.campaigns.reconcile(db, campaign_id)
                         continue
@@ -406,8 +514,8 @@ class WebService:
                     if campaign_id:
                         preview["campaign_id"] = campaign_id
                     operation_id = str(uuid.uuid4())
-                    db.execute("INSERT INTO web_operations(id,kind,state,created_at) VALUES(?,'scheduled-send','QUEUED',?)",
-                               (operation_id, now()))
+                    db.execute("INSERT INTO web_operations(id,kind,state,created_at,account_id) VALUES(?,'scheduled-send','QUEUED',?,?)",
+                               (operation_id, now(),self.account_id))
                     db.execute("UPDATE web_sends SET state='QUEUED',operation_id=?,updated_at=? WHERE id=? AND state='SCHEDULED'",
                                (operation_id, now(), row["id"]))
                     task = (operation_id, row["id"], preview)
@@ -441,19 +549,34 @@ class WebService:
             if not matches:
                 raise ViberError("The saved contact changed after review. No message was sent.")
             client, lead, name = self._verified(before.id)
-            if (name != preview["viber_name"] and (not campaign_id or preview["viber_name"])) or not client.verify_current_name(name):
-                raise ViberError("The Viber recipient changed after review. No message was sent.")
+            if not client.verify_current_name(name):
+                raise ViberError("The open Viber conversation is not stable. No message was sent.")
             matches = same_recipient(preview["lead"], asdict(lead)) if campaign_id else asdict(lead) == preview["lead"]
             if not matches:
                 raise ViberError("The saved contact changed while opening Viber. No message was sent.")
             self._check_deadline(preview)
-            with self.lock, closing(self.store._connect()) as db, db:
-                deferred = self._campaign_gate(db, campaign_id, send_id)
-                if deferred:
-                    return deferred
-                db.execute("UPDATE web_sends SET state='SUBMITTING',viber_name=?,attempted_at=?,updated_at=? WHERE id=?", (name, now(), now(), send_id))
-            submitting = True
-            client.send_message(preview["text"])
+            def before_dispatch():
+                self._check_deadline(preview)
+                if self.managed and self.watcher.poll_once() is None:
+                    raise ViberError('The current VM account identity could not be verified before dispatch.')
+                current = self.lead(lead.id)
+                if asdict(current)!=asdict(lead) or not client.verify_current_name(name):
+                    raise ViberError('Recipient or ownership changed immediately before dispatch.')
+            def on_dispatch():
+                nonlocal submitting
+                self._check_deadline(preview)
+                if asdict(self.lead(lead.id))!=asdict(lead):
+                    raise ViberError('Recipient ownership changed before the dispatch marker.')
+                with self.lock, closing(self.store._connect()) as db, db:
+                    if self._campaign_gate(db,campaign_id,send_id):
+                        raise ViberError('Campaign was paused before dispatch.')
+                    db.execute("UPDATE web_sends SET state='SUBMITTING',viber_name=?,attempted_at=?,updated_at=? WHERE id=?",(name,now(),now(),send_id))
+                submitting = True
+            if self.managed:
+                client.send_message(preview['text'],before_dispatch=before_dispatch,on_dispatch=on_dispatch,dispatch_lock=self.replies.dispatch_lock)
+            else:
+                on_dispatch()
+                client.send_message(preview['text'])
             with closing(self.store._connect()) as db, db:
                 db.execute("UPDATE web_sends SET state='DISPATCHED', updated_at=? WHERE id=?", (now(), send_id))
             self.event("SEND_DISPATCHED", f"Send action dispatched for contact #{lead.id}: {name}. Delivery unverified.")
@@ -477,12 +600,20 @@ class WebService:
         table = {"sent": "web_sends", "scheduled": "web_sends", "events": "web_events", "inbox": "web_reads"}[kind]
         order = "captured_at" if kind == "inbox" else "created_at"
         where = "WHERE scheduled_at IS NOT NULL AND state!='DRAFT'" if kind == "scheduled" else "WHERE state NOT IN ('DRAFT','SCHEDULED','CANCELLED','MISSED')" if kind == "sent" else ""
+        parameters=[]
+        if self.accounts and kind == 'events':
+            where = 'WHERE account_id=?'
+            parameters.append(self.account_id)
+        if self.accounts and kind in ('sent','scheduled','inbox'):
+            scope='EXISTS(SELECT 1 FROM contact_owners o WHERE o.account_id=? AND o.phone='+('web_sends.phone' if kind!='inbox' else '(SELECT phone FROM leads WHERE id=web_reads.lead_id)')+')'
+            where+=(' AND ' if where else ' WHERE ')+scope
+            parameters.append(self.accounts.account_id)
         order_by = ("CASE WHEN state='SCHEDULED' THEN 0 ELSE 1 END, "
                     "CASE WHEN state='SCHEDULED' THEN scheduled_at END, scheduled_at DESC" if kind == "scheduled"
                     else f"{order} DESC, rowid DESC")
         with closing(self.store._connect()) as db:
             rows = db.execute(f"SELECT * FROM {table} {where} ORDER BY {order_by} LIMIT ? OFFSET ?",
-                              (limit, offset)).fetchall()
+                              parameters+[limit,offset]).fetchall()
             campaigns = {row["id"]: dict(row) for row in db.execute("SELECT id,name,state FROM web_campaigns")} if kind in {"sent", "scheduled"} else {}
         result = [dict(row) for row in rows]
         for row in result:
@@ -509,6 +640,8 @@ class WebService:
         with closing(self.store._connect()) as db:
             rows = db.execute("SELECT state, updated_at FROM web_sends WHERE updated_at>=?",
                               ((datetime.now(timezone.utc) - timedelta(days=days + 1)).isoformat(),)).fetchall()
+            if self.accounts:
+                rows=db.execute('SELECT state,updated_at FROM web_sends WHERE updated_at>=? AND phone IN (SELECT phone FROM contact_owners WHERE account_id=?)',((datetime.now(timezone.utc)-timedelta(days=days+1)).isoformat(),self.accounts.account_id)).fetchall()
         for row in rows:
             day = str(datetime.fromisoformat(row["updated_at"]).astimezone(zone).date())
             state = row["state"].lower()
@@ -535,15 +668,8 @@ class WebService:
                 languages = result.stdout + result.stderr
             checks.append({"name": "Header recognition", "ok": bool(tesseract and "eng" in languages.split() and "srp_latn" in languages.split()),
                            "detail": "Tesseract with eng and srp_latn" if tesseract else "Tesseract not found on PATH"})
-            try:
-                adb = _find_adb()
-                result = subprocess.run([adb, "devices"], capture_output=True, text=True, timeout=10,
-                                        creationflags=0x08000000 if sys.platform == "win32" else 0)
-                devices = [line for line in result.stdout.splitlines() if "\tdevice" in line]
-                checks.append({"name": "Android contacts", "ok": len(devices) == 1,
-                               "detail": f"{len(devices)} authorized devices. Android is only needed to add contacts."})
-            except Exception as exc:
-                checks.append({"name": "Android contacts", "ok": False, "detail": str(exc)})
+            checks.append({"name": "Dashboard contacts", "ok": True,
+                           "detail": "Contacts are stored in the dashboard and verified through Viber Desktop. No USB phone is needed."})
             tree = None
             try:
                 client = self.client_factory().connect()

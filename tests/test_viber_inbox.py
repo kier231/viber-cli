@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock, patch
 
 from app.models import LeadStore
 from app.viber_database import DatabaseReadError, international_phone, read_snapshot, validate_schema
@@ -114,6 +115,60 @@ class InboxTests(unittest.TestCase):
             self.inbox.ingest(snapshot(maximum=0))
         self.assertEqual(self.inbox.status()['conversations'], 1)
 
+    def test_pending_outgoing_token_becomes_final_without_blocking_incoming_reply(self):
+        pending = message(1,'OUTGOING',token='0',sort_order=0)
+        self.inbox.ingest(snapshot(pending))
+        confirmed = {**pending,'token':'987654321','sort_order':987654321,
+                     'timestamp_ms':pending['timestamp_ms']+1500}
+        incoming = message(2,body='jesmo',timestamp_ms=confirmed['timestamp_ms']+1000)
+        self.assertEqual(self.inbox.ingest(snapshot(confirmed,incoming))['new_incoming'],1)
+        self.assertEqual(self.records()[1]['token'],'987654321')
+        self.assertEqual(self.records()[2]['detection'],'NEW_INCOMING')
+        self.assertEqual(self.inbox.ingest(snapshot(confirmed,incoming))['updated'],0)
+
+    def test_token_assignment_exception_does_not_accept_reused_outbound_identity(self):
+        pending = message(1,'OUTGOING',token='0',sort_order=0)
+        self.inbox.ingest(snapshot(pending))
+        for change in ({'body':'Another message'}, {'chat_id':11}, {'sender_id':3},
+                       {'direction':'INCOMING'}, {'message_type':2},
+                       {'sender_verified':False}, {'timestamp_ms':pending['timestamp_ms']+300_001}):
+            with self.subTest(change=change), self.assertRaises(DatabaseReadError):
+                self.inbox.ingest(snapshot({**pending,'token':'987654321',**change}))
+        confirmed = {**pending,'token':'987654321','sort_order':987654321}
+        self.inbox.ingest(snapshot(confirmed))
+        with self.assertRaises(DatabaseReadError):
+            self.inbox.ingest(snapshot({**confirmed,'token':'another-final-token'}))
+        self.assertEqual(self.records()[1]['token'],'987654321')
+
+    def test_pending_outgoing_can_inherit_previous_nonzero_sort_order(self):
+        pending = message(1,'OUTGOING',token='0',sort_order=6289758325868380042)
+        self.inbox.ingest(snapshot(pending))
+        confirmed = {**pending,'token':'6289764640162607856','sort_order':6289764640162607856,
+                     'timestamp_ms':pending['timestamp_ms']+1687}
+        incoming = message(2,body='zar vec neznas cime se bavim ?',
+                           timestamp_ms=confirmed['timestamp_ms']+1000)
+        self.assertEqual(self.inbox.ingest(snapshot(confirmed,incoming))['new_incoming'],1)
+        self.assertEqual(self.records()[1]['token'],'6289764640162607856')
+        self.assertEqual(self.records()[2]['detection'],'NEW_INCOMING')
+
+    def test_pending_link_message_ack_does_not_pause_incoming_detection(self):
+        pending = message(1,'OUTGOING',body='Primer: https://example.com/',
+                          token='0',sort_order=6289789730128182515,message_type=9)
+        self.inbox.ingest(snapshot(pending))
+        confirmed = {**pending,'token':'6289789887024485707',
+                     'sort_order':6289789887024485707,'timestamp_ms':pending['timestamp_ms']+506}
+        incoming = message(2,body='Koliko bi koštao takav sajt?',timestamp_ms=confirmed['timestamp_ms']+1000)
+        for change in ({'body':'A different link: https://other.example/'},
+                       {'sender_id':3}, {'message_type':1}):
+            with self.subTest(change=change), self.assertRaises(DatabaseReadError):
+                self.inbox.ingest(snapshot({**confirmed,**change},incoming))
+        self.assertEqual(self.inbox.ingest(snapshot(confirmed,incoming))['new_incoming'],1)
+        self.assertEqual(self.records()[1]['token'],confirmed['token'])
+        self.assertEqual(self.records()[2]['detection'],'NEW_INCOMING')
+        self.assertEqual(self.inbox.ingest(snapshot(confirmed,incoming))['updated'],0)
+        with self.assertRaises(DatabaseReadError):
+            self.inbox.ingest(snapshot({**confirmed,'token':'different-final-token'},incoming))
+
     def test_new_profile_gets_its_own_baseline_and_names_are_not_changed(self):
         self.baseline()
         self.inbox.ingest(snapshot(message(1), source='source-b'))
@@ -168,6 +223,8 @@ class InboxTests(unittest.TestCase):
         class Source:
             calls = 0
             def read(self, request):
+                if request.get('force_refresh') is not True:
+                    raise AssertionError('A watcher freshness check must bypass the reader cache.')
                 Source.calls += 1
                 if Source.calls == 2:
                     raise DatabaseReadError('Unavailable')
@@ -198,6 +255,52 @@ class InboxTests(unittest.TestCase):
 
 
 class SourceQueryTests(unittest.TestCase):
+    def test_reader_cache_expires_when_qt_data_version_does_not_change(self):
+        from app.viber_source_worker import QtViberSource
+        reader = QtViberSource.__new__(QtViberSource)
+        reader.path,reader.identity,reader.last_version = Path('unused'),'native',None
+        reader.viber_process = Mock()
+        reader.viber_process.is_running.return_value = True
+        reader.query = lambda sql: [{'data_version':7}] if sql=='PRAGMA data_version' else []
+        request = {'phones':[],'checkpoints':{}}
+        with patch('app.viber_source_worker.source_identity',return_value='native'), \
+             patch.object(reader,'_storage_version',return_value=('unchanged-files',)), \
+             patch('app.viber_source_worker.time.monotonic',side_effect=[10,10.1,11.01]), \
+             patch('app.viber_source_worker.read_snapshot',side_effect=[{'max_event_id':3},{'max_event_id':4}]) as scan:
+            self.assertEqual(reader.read(request)['max_event_id'],3)
+            self.assertTrue(reader.read(request)['unchanged'])
+            self.assertEqual(reader.read(request)['max_event_id'],4)
+            self.assertEqual(scan.call_count,2)
+
+    def test_reader_immediately_scans_changed_wal_despite_unchanged_data_version(self):
+        from app.viber_source_worker import QtViberSource
+        reader = QtViberSource.__new__(QtViberSource)
+        reader.path,reader.identity,reader.last_version = Path('unused'),'native',None
+        reader.viber_process = Mock()
+        reader.viber_process.is_running.return_value = True
+        reader.query = lambda sql: [{'data_version':7}] if sql=='PRAGMA data_version' else []
+        with patch('app.viber_source_worker.source_identity',return_value='native'), \
+             patch.object(reader,'_storage_version',side_effect=[('old-wal',),('new-wal',)]), \
+             patch('app.viber_source_worker.time.monotonic',side_effect=[10,10.1]), \
+             patch('app.viber_source_worker.read_snapshot',side_effect=[{'max_event_id':3},{'max_event_id':4}]):
+            self.assertEqual(reader.read({'phones':[]})['max_event_id'],3)
+            self.assertEqual(reader.read({'phones':[]})['max_event_id'],4)
+
+    def test_account_activation_requests_complete_identity_even_with_fresh_cache(self):
+        from app.viber_source_worker import QtViberSource
+        reader = QtViberSource.__new__(QtViberSource)
+        reader.path,reader.identity,reader.last_version = Path('unused'),'native',None
+        reader.viber_process = Mock()
+        reader.viber_process.is_running.return_value = True
+        reader.query = lambda sql: [{'data_version':7}] if sql=='PRAGMA data_version' else []
+        with patch('app.viber_source_worker.source_identity',return_value='native'), \
+             patch.object(reader,'_storage_version',return_value=('same-files',)), \
+             patch('app.viber_source_worker.time.monotonic',side_effect=[10,10.1]), \
+             patch('app.viber_source_worker.read_snapshot',return_value={'account_phone':'+381641111111','max_event_id':4}) as scan:
+            self.assertEqual(reader.read({'phones':[]})['max_event_id'],4)
+            self.assertEqual(reader.read({'phones':[],'force_refresh':True})['account_phone'],'+381641111111')
+            self.assertEqual(scan.call_count,2)
+
     def test_direct_phone_membership_and_group_exclusion(self):
         with closing(sqlite3.connect(':memory:')) as db:
             db.row_factory = sqlite3.Row

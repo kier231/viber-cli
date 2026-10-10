@@ -114,14 +114,14 @@ class ScheduledSendTests(unittest.TestCase):
         self.assertEqual(self.service.records("scheduled")[0]["state"], "MISSED")
         self.assertEqual(FakeDesktop.sent, [])
 
-    def test_recipient_is_checked_again_at_scheduled_time(self):
+    def test_renamed_recipient_can_receive_scheduled_message_at_same_phone(self):
         task, _ = self.schedule()
         self.make_due(task["send_id"])
-        FakeDesktop.name = "Another person"
+        FakeDesktop.name = "New display name"
         dispatch = self.service._dispatch_due()
-        self.assertEqual(self.completed(dispatch)["state"], "FAILED")
-        self.assertEqual(self.service.records("scheduled")[0]["state"], "BLOCKED")
-        self.assertEqual(FakeDesktop.sent, [])
+        self.assertEqual(self.completed(dispatch)["state"], "SUCCEEDED")
+        self.assertEqual(self.service.records("scheduled")[0]["state"], "DISPATCHED")
+        self.assertEqual(FakeDesktop.sent, ['Later message'])
 
     def test_busy_desktop_worker_defers_due_schedule(self):
         task, _ = self.schedule()

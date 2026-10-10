@@ -65,7 +65,7 @@ class WorkerSource:
 
 
 class DatabaseWatcher:
-    def __init__(self, lead_store, source_factory=WorkerSource, interval=5):
+    def __init__(self, lead_store, source_factory=WorkerSource, interval=1):
         self.leads = lead_store
         self.inbox = InboxStore(lead_store.path)
         self.source_factory = source_factory
@@ -78,6 +78,8 @@ class DatabaseWatcher:
         self.state = 'STOPPED'
         self.error = None
         self.last_attempt = None
+        self.accounts = None
+        self.on_ingest = None
 
     def start(self):
         with self.lock:
@@ -104,25 +106,44 @@ class DatabaseWatcher:
         try:
             if self.source is None:
                 self.source = self.source_factory()
-            snapshot = self.source.read({'phones': [lead.phone for lead in self.leads.all()],
-                                         'checkpoints': self.inbox.checkpoints()})
+            # A watcher poll is a freshness boundary, including the checks
+            # before sending. Do not let another bridge caller's cache replace it.
+            request = {'phones': [lead.phone for lead in self.leads.all()],
+                       'checkpoints': self.inbox.checkpoints(), 'force_refresh': True}
+            if self.accounts:
+                request['phones']=sorted(self.accounts.phones())
+                current=next(a for a in self.accounts.list() if a['id']==self.accounts.account_id)
+                request.update(include_new_senders=True,incoming_since_ms=current['monitoring_since_ms'])
+            snapshot = self.source.read(request)
+            if self.accounts:
+                self.accounts.source(snapshot)
             counts = self.inbox.ingest(snapshot)
             with self.lock:
                 self.state, self.error = 'WATCHING', None
+            if self.on_ingest:
+                self.on_ingest()
             return counts
         except Exception as exc:
             if self.source:
-                self.source.close()
-                self.source = None
+                try:
+                    self.source.close()
+                except Exception:
+                    # Retain the old handle if shutdown could not be confirmed;
+                    # never create a replacement reader alongside it.
+                    pass
+                else:
+                    self.source = None
             with self.lock:
                 self.state = 'BLOCKED'
                 self.error = str(exc) if isinstance(exc, DatabaseReadError) else 'Message detection failed. No reply was sent.'
             return None
 
     def _loop(self):
+        failures = 0
         while not self.stop_event.is_set():
             result = self.poll_once()
-            if self.stop_event.wait(self.interval if result is not None else 30):
+            failures = 0 if result is not None else failures+1
+            if self.stop_event.wait(self.interval if result is not None else min(15,2**min(failures,4))):
                 break
         if self.source:
             self.source.close()

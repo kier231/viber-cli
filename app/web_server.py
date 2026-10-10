@@ -123,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         if not re.fullmatch(r"[a-f0-9]{64}", token):
             raise PermissionError("Reload ViberOutreach to reconnect.")
         digest = hashlib.sha256(token.encode()).hexdigest()
-        with self.server.service.lock:
+        with getattr(self.server,'session_lock',self.server.service.lock):
             expiry = self.server.sessions.get(digest, 0)
         if expiry <= time.time():
             raise PermissionError("Your local session expired. Reload ViberOutreach.")
@@ -135,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
             if payload or self.headers.get("X-Viber-Browser") != "1":
                 raise PermissionError("Open the ViberOutreach page to connect.")
             token = secrets.token_hex(32)
-            with service.lock:
+            with getattr(self.server,'session_lock',service.lock):
                 self.server.sessions = {key: value for key, value in self.server.sessions.items() if value > time.time()}
                 if len(self.server.sessions) >= 128:
                     raise ValueError("Too many open sessions. Restart the local app.")
@@ -146,7 +146,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/viber/api/database/status":
                 return self._reply(200, {**service.watcher.status(), 'automatic_replies': service.replies.settings()['enabled']})
             if path == "/viber/api/replies":
-                return self._reply(200, {'settings': service.replies.settings(), 'jobs': service.replies.jobs()})
+                return self._reply(200, {'settings': service.replies.settings(), 'jobs': service.replies.jobs(), 'owner_questions': service.replies.feedback.questions()})
             if path == "/viber/api/database/conversations":
                 return self._reply(200, service.watcher.inbox.conversations(
                     offset=int(query.get('offset', ['0'])[0])))
@@ -164,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/viber/api/campaigns/"):
                 return self._reply(200, service.campaigns.detail(path.rsplit("/", 1)[1]))
             if path == "/viber/api/status":
-                return self._reply(200, {"pending": service.pending, "contacts": len(service.store.all())})
+                return self._reply(200, {"pending": service.pending, "contacts": len(service.contacts()),'accounts':service.accounts.list() if service.accounts else [],'queue':service.pool.queue.status() if service.managed else []})
             if path.startswith("/viber/api/operations/"):
                 return self._reply(200, service.operation(path.rsplit("/", 1)[1]))
             if path in {"/viber/api/sent", "/viber/api/scheduled", "/viber/api/events", "/viber/api/inbox"}:
@@ -176,8 +176,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(200, service.activity(int(query.get("days", ["30"])[0])))
         if self.command == "POST":
             payload = self._json()
+            if path=='/viber/api/shutdown' and service.managed:
+                if payload.get('confirmed') is not True or not getattr(service,'request_shutdown',None):
+                    raise ValueError('Confirmed local shutdown is required.')
+                service.request_shutdown()
+                return self._reply(200,{'state':'STOPPING'})
             if path == "/viber/api/replies":
-                return self._reply(200, service.replies.configure(payload.get('enabled'), payload.get('instructions')))
+                return self._reply(200, service.replies.configure(payload.get('enabled'), payload.get('instructions'), payload.get('require_approval')))
+            if path == '/viber/api/replies/review':
+                return self._reply(200,service.replies.review_draft(payload.get('job_id'),payload.get('approve')))
+            if path == '/viber/api/replies/answer':
+                return self._reply(200,service.replies.feedback.answer(payload.get('question_id'),payload.get('answer')))
+            if path == '/viber/api/replies/regenerate':
+                return self._reply(200,service.replies.regenerate(payload.get('job_id')))
             if path == "/viber/api/replies/conversation":
                 return self._reply(200, service.replies.conversation_control(payload.get('source_id'), payload.get('chat_id'), payload.get('enabled')))
             if path == "/viber/api/database/monitor":

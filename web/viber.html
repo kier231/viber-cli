@@ -19,6 +19,7 @@
   <p id="viber-busy" role="status" aria-live="polite" hidden></p>
   <label for="sender">Sending account</label>
   <select id="sender" aria-label="Sending account"><option>Current Viber Desktop account</option></select>
+  <p id="instance-setup" role="status" hidden></p>
   <nav aria-label="Viber workspace" class="viber-nav">
     <button type="button" data-view="compose" aria-current="page">Compose</button>
     <button type="button" data-view="scheduled">Scheduled</button>
@@ -112,13 +113,13 @@
     </section>
     <section id="contacts" aria-labelledby="contacts-title" hidden>
       <h2 id="contacts-title">Viber contacts</h2>
-      <p class="hint">Your existing CLI contact ledger. Business names and Android contact names stay as they are. The person's Viber name is stored separately.</p>
+      <p class="hint">Contacts belong to the selected sending account. Business names and the person's Viber name are stored separately.</p>
       <details id="add-panel" class="campaign-card">
-        <summary>Add an Android contact</summary>
+        <summary>Add a Viber contact</summary>
         <form id="contact-form">
           <label for="contact-phone">Phone number</label><input id="contact-phone" type="tel" placeholder="+381…" required>
           <label for="contact-company">Business name</label><input id="contact-company" maxlength="120" required>
-          <p class="hint">Connect your authorized Android phone to add and verify the contact.</p>
+          <p class="hint">The selected Viber instance verifies the number before saving it here. No message is sent.</p>
           <button id="add-contact" type="submit">Add contact</button>
         </form>
       </details>
@@ -143,7 +144,7 @@
     </section>
     <section id="health" aria-labelledby="health-title" hidden>
       <h2 id="health-title">Viber health and diagnostics</h2>
-      <p class="hint">Keep Viber logged in and restored behind another window. Your Windows session must remain unlocked. Adding contacts also needs an authorized Android phone.</p>
+      <p class="hint">Keep the selected Viber VM running, signed in, and its Windows session unlocked. New contacts are verified through that instance.</p>
       <div class="actions"><button id="check-health" type="button">Check setup</button><button id="inspect" type="button">Inspect Viber controls</button></div>
       <div id="health-checks"></div><pre id="inspect-tree" hidden></pre>
     </section>
@@ -154,7 +155,7 @@
       <p class="hint">Messages from personal chats matched to your saved phone numbers. Incoming and outgoing are identified from Viber's database. Detection and replies run in the background.</p>
       <div id="database-status" class="health-card" role="status" aria-live="polite">Checking the message watcher…</div>
       <section class="viber-record" aria-labelledby="reply-title">
-        <h3 id="reply-title">Codex automatic replies</h3>
+        <h3 id="reply-title">Codex replies</h3>
         <p id="reply-status" role="status" aria-live="polite">Checking automatic replies…</p>
         <p class="hint">Uses your ChatGPT sign-in, with no API key. Replies to future incoming text in monitored chats using all retained conversation history. Keep this server running and Viber restored behind another window. Old messages are not replayed when you enable replies.</p>
         <div class="actions"><button id="reply-toggle" type="button" disabled>Checking…</button></div>
@@ -163,8 +164,10 @@
           <textarea id="reply-instructions" rows="5" maxlength="8000" required></textarea>
           <button type="submit">Save instructions</button>
         </form>
-        <p class="hint">Codex replies only to contacts previously messaged through this app. It waits briefly for a message burst, checks the recipient and checks for new messages before Send. Regular Viber contacts, missing facts and uncertain sends are held without sending.</p>
-        <details><summary>Recent automatic replies and held turns</summary><div id="reply-jobs"></div></details>
+        <p id="reply-delivery" class="hint">Checking reply delivery mode…</p>
+        <p id="reply-portfolio" class="hint"></p>
+        <details open><summary id="owner-questions-summary">Questions for you and saved rules</summary><p class="hint">Tell the bot how to handle this situation next time. Your answer is saved for future drafts. Saving a rule invalidates drafts made with older rules.</p><div id="reply-owner-questions"></div></details>
+        <details open><summary id="reply-jobs-summary">Reply activity and held turns</summary><div id="reply-jobs"></div></details>
       </section>
       <div class="actions"><button id="database-refresh" type="button">Refresh inbox</button></div>
       <div id="database-list"></div><button id="database-more" type="button" hidden>Load more conversations</button>
@@ -177,6 +180,6 @@
       <details class="viber-record"><summary>Saved visible chat snapshots</summary><p class="hint">Earlier captures made through Conversation. These snapshots are separate from the database history above.</p><div id="inbox-list"></div><button id="inbox-more" type="button" hidden>Load more snapshots</button></details>
     </section>
   </main>
-  <footer>Runs on your machine. Viber controls leave your mouse, keyboard, and clipboard free. Manual sends require confirmation; enabled automatic replies use your saved instructions. The server must stay running for scheduled messages, campaigns and replies. Email campaigns remain in EmailOutreach.</footer>
+  <footer>Runs on your machine. Each Viber account has its own inbox and send queue. Manual messages and outreach campaigns require review. Codex replies use the delivery mode shown in Inbox. Keep the app running for scheduled messages, campaigns and replies. Email campaigns remain in EmailOutreach.</footer>
 </body>
 </html>

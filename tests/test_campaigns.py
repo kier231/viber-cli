@@ -165,13 +165,14 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(detail['counts'], {'MISSED': 1, 'SCHEDULED': 2})
         self.assertEqual(FakeDesktop.sent, [])
 
-    def test_known_name_mismatch_blocks_and_pauses(self):
+    def test_known_name_mismatch_does_not_pause_campaign_at_same_phone(self):
         self.service.store.set_viber_name(self.leads[0].id, 'Expected person')
         active, _ = self.activate()
         self.due(active['recipients'][0]['id'])
-        self.assertEqual(self.dispatch()['state'], 'FAILED')
-        self.assertEqual(self.service.campaigns.detail(active['id'])['state'], 'PAUSED')
-        self.assertEqual(FakeDesktop.sent, [])
+        self.assertEqual(self.dispatch()['state'], 'SUCCEEDED')
+        self.assertEqual(self.service.campaigns.detail(active['id'])['state'], 'ACTIVE')
+        self.assertEqual(len(FakeDesktop.sent), 1)
+        self.assertEqual(self.service.records('sent')[0]['viber_name'], 'Viber Person')
 
     def test_restart_with_interrupted_campaign_pauses_without_retry(self):
         active, _ = self.activate()

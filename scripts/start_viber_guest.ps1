@@ -9,6 +9,12 @@ if (-not (Test-Path -LiteralPath $tokenPath)) { throw 'The VM bridge token is mi
 if (-not (Test-Path -LiteralPath $python)) { throw 'The VM Python environment is missing.' }
 $env:VIBER_CLI_VM_TOKEN = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
 $env:VIBER_CLI_VM_PORT = '4011'
+$instancePath = Join-Path $stateDir 'instance.json'
+if (Test-Path -LiteralPath $instancePath) {
+    $instance = Get-Content -LiteralPath $instancePath -Raw | ConvertFrom-Json
+    $env:VIBER_CLI_VM_INSTANCE_ID = $instance.id
+    $env:VIBER_CLI_AWAIT_ACTIVATION = '1'
+}
 $env:PATH = "$tesseract;$env:PATH"
 $env:TESSDATA_PREFIX = Join-Path $stateDir 'tessdata'
 Set-Location -LiteralPath $root

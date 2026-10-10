@@ -44,7 +44,7 @@ def validate_schema(query):
             raise DatabaseReadError('Viber database schema changed; message detection is paused.')
 
 
-def read_snapshot(query, *, source_id, own_phone, phones, after_event_id=0):
+def read_snapshot(query, *, source_id, own_phone, phones, after_event_id=0, include_new_senders=False, incoming_since_ms=0):
     """Caller holds a read transaction. Reconciles all retained contact history.
 
     IDs, directions and sender membership come from Viber, never message text.
@@ -78,7 +78,13 @@ def read_snapshot(query, *, source_id, own_phone, phones, after_event_id=0):
         peer = contacts.get(peer_id)
         phone = international_phone(peer['Number']) if peer else None
         if phone not in phones:
-            continue
+            if not include_new_senders or not phone or phone==own_phone:
+                continue
+            fresh = query('''SELECT e.EventID FROM Events e JOIN Messages m ON m.EventID=e.EventID
+                WHERE e.ChatID=? AND e.ContactID=? AND e.Direction=0 AND e.EventID>?
+                AND e.TimeStamp>=? AND m.Type=1 LIMIT 1''',(chat_id,peer_id,after_event_id,incoming_since_ms))
+            if not fresh:
+                continue
         chats.append({'chat_id': chat_id, 'peer_id': peer_id, 'phone': phone,
                       'viber_name': peer['ClientName'] or peer['Name'] or phone})
     max_id = query('SELECT COALESCE(MAX(EventID),0) AS maximum FROM Events')[0]['maximum']
@@ -103,4 +109,4 @@ def read_snapshot(query, *, source_id, own_phone, phones, after_event_id=0):
             row['sender_verified'] = row['direction'] == 'OUTGOING' or row['sender_id'] == chat['peer_id']
             messages.append(row)
     return {'source_id': source_id, 'account_phone': own_phone, 'chats': chats,
-            'messages': messages, 'max_event_id': int(max_id)}
+            'messages': messages, 'max_event_id': int(max_id), 'incoming_since_ms':incoming_since_ms}

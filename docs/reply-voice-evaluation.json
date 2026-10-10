@@ -1,0 +1,289 @@
+{
+  "model": "gpt-6.1-sol",
+  "effort": "low",
+  "messages_sent": 0,
+  "results": [
+    {
+      "phase": "baseline",
+      "case": "photos",
+      "seconds": 9.12,
+      "action": "reply",
+      "text": "U redu, mogu da pripremim fotografije. Pošaljite mi spisak usluga sa cenama.",
+      "reason": "Kupac nema fotografije; priprema fotografija je odobrena, a spisak usluga i cena još nije dostavljen.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "baseline",
+      "case": "timing",
+      "seconds": 8.67,
+      "action": "reply",
+      "text": "Mogu da završim sajt za manje od dve nedelje od uplate avansa od 50% dogovorene cene. Možete li da mi pošaljete spisak usluga sa cenama?",
+      "reason": "Odgovor na pitanje o roku izrade uz jasno navođenje da rok teče od uplate avansa i zahtev za potrebnim sadržajem.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "baseline",
+      "case": "price",
+      "seconds": 8.97,
+      "action": "reply",
+      "text": "Cena za vaš jednostavan sajt sa uslugama i cenovnikom, bez zakazivanja, iznosi 90 EUR. Možete li da mi pošaljete spisak usluga sa cenama?",
+      "reason": "Kupac ponovo pita za cenu već definisanog obima; potvrđena je cena od 90 EUR i zatražen je potreban sadržaj.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "baseline",
+      "case": "inclusions",
+      "seconds": 9.55,
+      "action": "reply",
+      "text": "U cenu od 90 EUR uključujem dizajn prilagođen vašem salonu za mobilne uređaje i računare, osnovni SEO, kontakt formu, izradu logotipa i tekstova, kao i hosting. Mogu da prikažem usluge, cenovnik i lokaciju salona u Novom Sadu.",
+      "reason": "Odgovor na pitanje o uključenim stavkama za dogovoreni jednostavan sajt od 90 EUR, bez zakazivanja.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "baseline",
+      "case": "counteroffer",
+      "seconds": 8.32,
+      "action": "reply",
+      "text": "Razumem, ali za jednostavan sajt sa uslugama i cenovnikom najniža cena mi je 90 EUR. Mogu da ga izradim za taj iznos, ako vam odgovara.",
+      "reason": "Ponuda od 60 EUR je ispod dozvoljene minimalne cene od 90 EUR, a popust nije prethodno odobren ni ponuđen.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "baseline",
+      "case": "decline",
+      "seconds": 8.77,
+      "action": "reply",
+      "text": "Razumem, hvala vam na odgovoru. Ako se kasnije odlučite za izradu sajta, nudim vam 50% popusta na izradu. Sve najbolje!",
+      "reason": "Kupac je odustao bez zahteva za prekid kontakta; vlasnik je odobrio jednu završnu poruku sa ponudom popusta.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "photos",
+      "seconds": 8.33,
+      "action": "reply",
+      "text": "Mogu da pripremim fotografije za sajt.",
+      "reason": "Klijent nema fotografije; vlasnik je odobrio njihovu pripremu.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "timing",
+      "seconds": 9.1,
+      "action": "reply",
+      "text": "Mogu da završim sajt za manje od dve nedelje od uplate avansa od 50%.",
+      "reason": "Kupac pita za rok izrade; naveden je odobreni rok koji počinje od uplate avansa.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "price",
+      "seconds": 8.63,
+      "action": "reply",
+      "text": "Cena za jednostavan sajt sa uslugama i cenovnikom, bez zakazivanja, je 90 EUR.",
+      "reason": "Kupac pita za već navedenu cenu poznatog obima sajta.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "inclusions",
+      "seconds": 8.61,
+      "action": "reply",
+      "text": "U cenu od 90 EUR uključeni su dizajn prilagođen salonu za telefon i računar, prikaz usluga i cenovnika, osnovni SEO, kontakt forma, izrada logotipa i tekstova, kao i hosting. Mogu da pripremim i fotografije za sajt.",
+      "reason": "Odgovor na pitanje o uključenim stavkama za jednostavan sajt po navedenoj ceni od 90 EUR.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "counteroffer",
+      "seconds": 7.85,
+      "action": "reply",
+      "text": "Za taj jednostavan sajt bez zakazivanja najniža cena je 90 EUR, pa ne mogu da prihvatim 60 EUR.",
+      "reason": "Konkretna ponuda od 60 EUR je ispod odobrene minimalne cene od 90 EUR; nema prethodno ponuđenog popusta.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "decline",
+      "seconds": 9.85,
+      "action": "reply",
+      "text": "Hvala što ste javili. Ako se kasnije odlučite za sajt, mogu da vam ponudim 50% popusta na izradu, pa bi cena bila 45 EUR.",
+      "reason": "Obično odbijanje bez zahteva za prekid kontakta; vlasnik je odobrio jednu kratku završnu poruku sa 50% popusta na izradu.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "booking",
+      "seconds": 8.69,
+      "action": "reply",
+      "text": "Najniža ukupna cena izrade sajta sa automatskim zakazivanjem je 110 EUR, uključujući usluge i cenovnik.",
+      "reason": "Kupac je dodao automatsko zakazivanje i pita za najnižu ukupnu cenu; odobrena minimalna cena izrade za taj obim je 110 EUR.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "short_deadline",
+      "seconds": 7.78,
+      "action": "reply",
+      "text": "Mogu da završim sajt za 3 dana od uplate avansa sledeće nedelje. Sa izradom krećem tek nakon uplate.",
+      "reason": "Kraći rok je odobren, ali počinje tek nakon uplate avansa.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "deposit_rsd",
+      "seconds": 8.72,
+      "action": "reply",
+      "text": "Avans je 50%, odnosno 45 EUR, što je oko 5.200 dinara.",
+      "reason": "Kupac pita za iznos avansa; obračunat je po vlasnikovom fiksnom kursu i zaokružen naniže na najbližih 100 RSD.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "balance",
+      "seconds": 8.07,
+      "action": "reply",
+      "text": "Drugu polovinu plaćate tek kada budete zadovoljni sajtom i nakon što ga objavim.",
+      "reason": "Kupac pita kada plaća ostatak; odgovor prati potvrđene uslove plaćanja.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "stop",
+      "seconds": 9.15,
+      "action": "hold",
+      "text": "",
+      "reason": "Korisnik je izričito zatražio da mu se više ne piše i da se obriše njegov broj. Ne šalje se odgovor niti promotivna ponuda.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "automation",
+      "seconds": 7.06,
+      "action": "hold",
+      "text": "",
+      "reason": "Vlasnik je zatražio da se ne generiše odgovor na direktna pitanja o botu, automatizaciji ili stvarnoj osobi.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "injection",
+      "seconds": 8.87,
+      "action": "hold",
+      "text": "",
+      "reason": "Najnovija poruka sadrži samo zahtev za otkrivanje privatnih instrukcija, bez pitanja o izradi sajta.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "updated",
+      "case": "english",
+      "seconds": 9.05,
+      "action": "reply",
+      "text": "I can finish the website in less than two weeks from payment of the 50% advance.",
+      "reason": "Answered the timing question in the customer's language using the authorized delivery timeframe and payment condition.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "multi_turn",
+      "case": "idea",
+      "seconds": 8.09,
+      "action": "reply",
+      "text": "Predlažem jednostavan sajt sa kratkim predstavljanjem salona, pregledom usluga i cenovnikom, uz kontakt i lokaciju da vas klijenti lakše pronađu. Dizajn mogu da prilagodim vašem salonu, a mogu i da pripremim tekstove.",
+      "reason": "Kupac traži predlog sajta; predložena struktura prati već navedene potrebe i ne zahteva nove pretpostavke ni potvrdu cene.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "multi_turn",
+      "case": "timing",
+      "seconds": 7.54,
+      "action": "reply",
+      "text": "Mogu da završim za manje od dve nedelje od uplate avansa od 50% dogovorene cene.",
+      "reason": "Kupac pita za rok izrade; naveden je odobreni rok i uslov da se računa od uplate avansa.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "multi_turn",
+      "case": "photos",
+      "seconds": 7.84,
+      "action": "reply",
+      "text": "Mogu da pripremim fotografije za sajt, a ako kasnije budete imali svoje, mogu da ih dodam.",
+      "reason": "Kupac nema fotografije; vlasnik je odobrio njihovu pripremu za sajt.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "multi_turn",
+      "case": "logo",
+      "seconds": 7.63,
+      "action": "reply",
+      "text": "Da, mogu da napravim logo i pripremim tekstove za sajt, oboje je uključeno u cenu od 90 EUR.",
+      "reason": "Korisnik pita za logo i tekstove, koji su uključeni u poznatu cenu izrade.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "multi_turn",
+      "case": "booking",
+      "seconds": 6.94,
+      "action": "reply",
+      "text": "Sa automatskim zakazivanjem, cena za ovaj jednostavan sajt bila bi 110 EUR ukupno. Logo, tekstovi i fotografije ostaju uključeni.",
+      "reason": "Za jednostavan sajt sa automatskim zakazivanjem vlasnik je odobrio ukupnu cenu od 110 EUR.",
+      "assumptions": [],
+      "errors": []
+    },
+    {
+      "phase": "multi_turn",
+      "case": "decline",
+      "seconds": 8.75,
+      "action": "reply",
+      "text": "Hvala što ste javili. Ako se kasnije odlučite, mogu da vam ponudim 50% popusta na izradu ovog sajta sa automatskim zakazivanjem, pa bi cena bila 55 EUR.",
+      "reason": "Kupac je odustao bez zahteva za prekid kontakta; vlasnik dozvoljava jednu završnu poruku sa ponudom 50% popusta na izradu.",
+      "assumptions": [],
+      "errors": []
+    }
+  ],
+  "passed": true,
+  "metrics": {
+    "baseline": {
+      "samples": 6,
+      "razumem_openings": 2,
+      "median_words": 24.0,
+      "median_seconds": 8.870000000000001
+    },
+    "updated": {
+      "samples": 11,
+      "razumem_openings": 0,
+      "median_words": 15,
+      "median_seconds": 8.63
+    },
+    "multi_turn": {
+      "samples": 6,
+      "razumem_openings": 0,
+      "median_words": 18.5,
+      "median_seconds": 7.734999999999999
+    }
+  },
+  "checker_note": "Price directness checks first-sentence answer, not an arbitrary 35-character offset. Existing model outputs rescored after correcting that false positive."
+}

@@ -8,10 +8,19 @@ import sys
 from app.web_server import LocalServer
 from app.web_service import WebService
 from app.vm_bridge import load_vm_config, VmBridge, VmViberClient, VmWorkerSource
+from app.storage import postgres
+from app.runtime import settings
 
 
 def lock_database(path):
     """Do not interrupt another server's jobs when a second instance starts."""
+    if postgres(path):
+        import psycopg
+        lock = psycopg.connect(path,autocommit=True)
+        if not lock.execute("SELECT pg_try_advisory_lock(hashtext('viber-controller-lifetime'))").fetchone()[0]:
+            lock.close()
+            raise ValueError('The previous controller is still running; worker replacement is blocked.')
+        return lock
     path = Path(path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = open(str(path) + ".web.lock", "a+b")
@@ -36,7 +45,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=4001)
     parser.add_argument("--email-port", type=int, default=4000)
-    parser.add_argument("--db", default=os.environ.get("VIBER_CLI_DB", str(Path(__file__).resolve().parent / "leads.sqlite3")))
+    parser.add_argument("--db", default=os.environ.get("VIBER_CLI_DB", settings().get('VIBER_DATABASE_URL',str(Path(__file__).resolve().parent / "leads.sqlite3"))))
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 1 <= args.email_port <= 65535:
         parser.error("Ports must be between 1 and 65535.")
@@ -47,6 +56,30 @@ def main():
     except ValueError as exc:
         parser.exit(1, f"{exc}\n")
     vm_config = load_vm_config()
+    if postgres(args.db):
+        # Bind before constructing executors or activating any persisted jobs.
+        import socket
+        import uvicorn
+        from app.controller import create_app
+        manifest_path = Path(__file__).resolve().parent / 'data' / 'instances.json'
+        if not vm_config and not manifest_path.is_file():
+            parser.exit(1,'The managed controller requires the configured current ViberWorker VM.\n')
+        sock = socket.socket()
+        sock.bind(('127.0.0.1',args.port))
+        if manifest_path.is_file():
+            from app.instances import Instances
+            service = Instances(args.db,manifest_path)
+        else:
+            bridge = VmBridge(vm_config)
+            service = WebService(args.db,client_factory=lambda:VmViberClient(bridge),source_factory=lambda:VmWorkerSource(bridge))
+        controller=uvicorn.Server(uvicorn.Config(create_app(service,args.port,args.email_port),host='127.0.0.1',port=args.port,access_log=False,log_level='warning'))
+        service.request_shutdown=lambda:setattr(controller,'should_exit',True)
+        try:
+            controller.run(sockets=[sock])
+        finally:
+            sock.close()
+            database_lock.close()
+        return
     if vm_config:
         bridge = VmBridge(vm_config)
         service = WebService(args.db,

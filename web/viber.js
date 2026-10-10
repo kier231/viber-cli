@@ -12,9 +12,11 @@
   const clearError = () => { $('error').hidden = true; };
   const action = work => async event => { event?.preventDefault(); clearError(); try { await work(event); } catch (error) { showError(error); } };
   const views = ['compose', 'scheduled', 'campaigns', 'contacts', 'conversation', 'activity', 'health', 'events', 'sent', 'inbox'];
-  const pendingKey = 'viberoutreach-pending-send';
-  const draftKey = 'viberoutreach-draft';
-  const campaignPendingKey = 'viberoutreach-pending-campaign';
+  const selectedAccount = new URLSearchParams(location.search).get('account') || 'instance-1';
+  let instanceReady = false, multipleInstances = false;
+  const pendingKey = 'viberoutreach-pending-send:' + selectedAccount;
+  const draftKey = 'viberoutreach-draft:' + selectedAccount;
+  const campaignPendingKey = 'viberoutreach-pending-campaign:' + selectedAccount;
   const campaignSelection = new Set();
   let campaignPreview = null, campaignPending = null, campaignWorking = false, campaignsLoading = false;
   let campaignsSignature = null;
@@ -24,6 +26,8 @@
   let databaseLoading = false, databaseOffset = 0, databaseSignature = null;
   let databaseChat = null, databaseOlder = null, databaseRevision = null;
   let replySettings = null, replyInstructionsDirty = false;
+  let ownerQuestionsSignature = null, replyJobsSignature = null;
+  const ownerAnswerDrafts = new Map();
   let pending = null;
   try { pending = JSON.parse(localStorage.getItem(pendingKey) || 'null'); }
   catch { showError(new Error('The saved send attempt cannot be read. Check Sent before sending another message.')); }
@@ -32,7 +36,7 @@
 
   async function api(path, payload) {
     const response = await fetch('/viber/api/' + path, { method: payload === undefined ? 'GET' : 'POST', credentials: 'same-origin', redirect: 'error',
-      headers: { 'Content-Type': 'application/json', 'X-Viber-CSRF': csrf || '', ...(path === 'session' ? {'X-Viber-Browser': '1'} : {}) },
+      headers: { 'Content-Type': 'application/json', 'X-Viber-CSRF': csrf || '', 'X-Viber-Account': selectedAccount, ...(path === 'session' ? {'X-Viber-Browser': '1'} : {}) },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }), signal: AbortSignal.timeout(15000) });
     const result = await response.json();
     if (!response.ok) { const error = new Error(result.message || `Request failed (${response.status}).`); error.status = response.status; throw error; }
@@ -165,14 +169,14 @@
       row.append(text, actions); record.append(row);
       const editor = node('details', null, 'contact-editor'); editor.append(node('summary', 'Contact details and Viber name'));
       const grid = node('dl', null, 'contact-detail-grid');
-      for (const [key, value] of [['Business', lead.company_name], ['Phone', lead.phone], ['Android contact', lead.contact_name], ['Created', date(lead.created_at)]]) grid.append(node('dt', key), node('dd', value));
+      for (const [key, value] of [['Business', lead.company_name], ['Phone', lead.phone], ['Saved contact', lead.contact_name], ['Created', date(lead.created_at)]]) grid.append(node('dt', key), node('dd', value));
       const form = node('form', null, 'contact-edit-form'), label = node('label', "Person's Viber name"), input = node('input');
       input.id = 'viber-name-' + lead.id; input.value = lead.viber_name || ''; input.maxLength = 120; input.required = true; label.htmlFor = input.id;
       const submit = node('button', 'Save Viber name'); submit.type = 'submit'; submit.disabled = busy;
       form.append(label, input, submit); form.addEventListener('submit', action(async () => {
         if (busy) throw new Error('Wait for the Viber operation to finish.');
         await api('name', { lead_id: lead.id, name: input.value });
-        preview = null; updateCompose(); await loadContacts(); $('contact-status').textContent = 'Viber name saved. Business and Android contact names preserved.';
+        preview = null; updateCompose(); await loadContacts(); $('contact-status').textContent = 'Viber name saved. Business and saved contact names preserved.';
       }));
       editor.append(grid, form); record.append(editor); $('contact-list').append(record);
     }
@@ -257,21 +261,88 @@
 
   function renderReplies(result) {
     replySettings = result.settings;
-    $('reply-status').textContent = `Automatic replies ${replySettings.enabled ? 'ON' : 'OFF'} · ${replySettings.state.replaceAll('_', ' ').toLowerCase()} · ChatGPT sign-in` + (replySettings.error ? ' · ' + replySettings.error : '');
-    $('reply-toggle').textContent = replySettings.enabled ? 'Pause automatic replies' : 'Enable automatic replies';
+    $('reply-status').textContent = `${replySettings.review_required ? 'AI drafting' : 'Automatic replies'} ${replySettings.enabled ? 'ON' : 'OFF'} · ${replySettings.state.replaceAll('_', ' ').toLowerCase()} · ChatGPT sign-in` + (replySettings.error ? ' · ' + replySettings.error : '');
+    const replyMode = replySettings.review_required ? 'AI drafting' : 'automatic replies';
+    $('reply-title').textContent = replySettings.review_required ? 'Codex reply drafts' : 'Codex automatic replies';
+    $('reply-toggle').textContent = `${replySettings.enabled ? 'Pause' : 'Enable'} ${replyMode}`;
+    $('reply-delivery').textContent = (replySettings.review_required ? 'Each draft requires your approval. ' : 'Completed Codex replies send automatically after account and recipient verification. ') + 'Routine assumptions appear below as private questions and do not block replies. New messages or changed rules cancel outdated replies. Uncertain sends need review.';
+    $('reply-jobs-summary').textContent = replySettings.review_required ? 'Reply drafts and held turns' : 'Automatic reply activity and held turns';
     $('reply-toggle').disabled = busy;
     if (!replyInstructionsDirty && document.activeElement !== $('reply-instructions')) $('reply-instructions').value = replySettings.instructions;
-    $('reply-jobs').replaceChildren();
-    if (!result.jobs.length) $('reply-jobs').append(node('p', 'No automatic reply attempts yet. Waiting for a new incoming message.', 'hint'));
-    for (const job of result.jobs) {
-      const card = node('article', null, 'viber-record');
-      card.append(node('strong', `${job.phone} · ${job.state}`), node('p', date(job.updated_at), 'hint'));
-      if (job.text) card.append(node('pre', job.text));
-      if (job.reason) card.append(node('p', job.reason));
-      if (job.state === 'UNKNOWN') card.append(node('p', 'Check Viber and Sent before resuming this chat. This turn will not be retried automatically.', 'warning'));
-      $('reply-jobs').append(card);
+    $('reply-portfolio').textContent = `${replySettings.portfolio_count || 0} owner-approved portfolio projects available for relevant examples.`;
+    renderOwnerQuestions(result.owner_questions || []);
+    const jobsSignature = JSON.stringify([replySettings.review_required,result.jobs]);
+    if (jobsSignature !== replyJobsSignature) {
+      replyJobsSignature = jobsSignature;
+      $('reply-jobs').replaceChildren();
+      if (!result.jobs.length) $('reply-jobs').append(node('p', 'No automatic reply attempts yet. Waiting for a new incoming message.', 'hint'));
+      for (const job of result.jobs) {
+        const card = node('article', null, 'viber-record');
+        card.append(node('strong', `${job.phone} · ${job.state}`), node('p', date(job.updated_at), 'hint'));
+        if (job.text) card.append(node('pre', job.text));
+        if (job.reason) card.append(node('p', job.reason));
+        for (const item of job.assumptions || []) card.append(node('p', 'Assumed: ' + item.assumption, 'hint'));
+        if (job.generation_ms !== null && job.generation_ms !== undefined) card.append(node('p', `Generation ${(job.generation_ms/1000).toFixed(1)}s · Queue ${((job.queue_ms || 0)/1000).toFixed(1)}s` + (replySettings.review_required && job.review_ms != null ? ` · Review ${(job.review_ms/1000).toFixed(1)}s` : ''), 'hint'));
+        if (job.state === 'RETRY' && job.retry_at) card.append(node('p', `Waiting to retry at ${new Date(job.retry_at).toLocaleTimeString()} · Retry ${job.retry_count}`, 'hint'));
+        if (job.dispatch_queue_ms != null) card.append(node('p',`Send queue ${(job.dispatch_queue_ms/1000).toFixed(1)}s`,'hint'));
+        if (job.state === 'DRAFT' && replySettings.review_required) {
+          for (const [label, approve] of [['Approve and send',true],['Reject',false]]) {
+            const button = node('button',label);
+            button.type = 'button';
+            button.addEventListener('click',async()=>{button.disabled=true;try {await api('replies/review',{job_id:job.id,approve});await loadDatabaseInbox();}catch(error){showError(error);button.disabled=false;}});
+            card.append(button);
+          }
+        }
+        if (job.state === 'UNKNOWN') card.append(node('p', 'Check Viber and Sent before resuming this chat. This turn will not be retried automatically.', 'warning'));
+        if (job.state === 'STALE') {
+          const button = node('button', replySettings.review_required ? 'Regenerate with current rules' : 'Regenerate and send');
+          button.type = 'button';
+          button.addEventListener('click', action(async () => {
+            button.disabled = true;
+            try { await api('replies/regenerate', {job_id: job.id}); await loadDatabaseInbox(); }
+            finally { button.disabled = false; }
+          }));
+          card.append(button);
+        }
+        $('reply-jobs').append(card);
+      }
     }
     if (databaseChat) $('database-meta').textContent = databaseChat.phone + ' · Retained Viber Desktop history · Automatic replies ' + (replySettings.enabled && databaseChat.reply_enabled && databaseChat.monitoring ? 'on' : 'off');
+  }
+
+  function renderOwnerQuestions(questions) {
+    const target = $('reply-owner-questions');
+    const open = questions.filter(q => q.state === 'OPEN').length;
+    $('owner-questions-summary').textContent = `Questions for you (${open} open) and saved rules`;
+    const signature = JSON.stringify(questions);
+    // One-second inbox polling must never replace a focused answer field.
+    if (signature === ownerQuestionsSignature || target.contains(document.activeElement)) return;
+    ownerQuestionsSignature = signature;
+    target.replaceChildren();
+    if (!questions.length) target.append(node('p', 'When the bot makes a new assumption, its question for you will appear here. Drafting can continue while you answer.', 'hint'));
+    for (const question of questions) {
+      const card = node('article', null, 'viber-record');
+      card.append(node('strong', question.question), node('p', `${question.phone} · ${question.state === 'OPEN' ? 'Needs a future rule' : 'Saved rule'}`, 'hint'), node('p', 'Assumed: ' + question.assumption));
+      const form = node('form'), label = node('label', 'Your rule for this situation');
+      const input = node('textarea');
+      input.id = 'owner-answer-' + question.id; input.rows = 2; input.maxLength = 2000; input.required = true;
+      label.htmlFor = input.id;
+      input.value = ownerAnswerDrafts.get(question.id) ?? question.answer;
+      input.addEventListener('input', () => ownerAnswerDrafts.set(question.id, input.value));
+      const button = node('button', question.state === 'OPEN' ? 'Save future rule' : 'Update saved rule');
+      button.type = 'submit';
+      form.append(label, input, button);
+      form.addEventListener('submit', action(async () => {
+        button.disabled = true;
+        try {
+          await api('replies/answer', {question_id: question.id, answer: input.value});
+          ownerAnswerDrafts.delete(question.id); ownerQuestionsSignature = null;
+          input.blur(); button.blur();
+          await loadDatabaseInbox();
+        } finally { button.disabled = false; }
+      }));
+      card.append(form); target.append(card);
+    }
   }
 
   async function saveReplies(enabled, instructions) {
@@ -579,7 +650,7 @@
     if (schedule && !reviewed.scheduled_at) throw new Error('The server needs to restart to enable scheduling. Refresh after the update.');
     preview = reviewed;
     $('confirm-recipient').replaceChildren();
-    for (const [label, value] of [['Business', preview.lead.company_name], ['Viber name', preview.viber_name], ['Phone', preview.lead.phone], ['Android contact', preview.lead.contact_name]]) $('confirm-recipient').append(node('dt', label), node('dd', value));
+    for (const [label, value] of [['Business', preview.lead.company_name], ['Viber name', preview.viber_name], ['Phone', preview.lead.phone], ['Saved contact', preview.lead.contact_name]]) $('confirm-recipient').append(node('dt', label), node('dd', value));
     if (preview.scheduled_at) $('confirm-recipient').append(node('dt', 'Send time'), node('dd', date(preview.scheduled_at) + ' · Europe/Warsaw'));
     $('confirm-label').textContent = preview.scheduled_at ? 'I checked this recipient, message, and scheduled time.' : 'I checked this recipient and message.';
     $('confirm-body').textContent = preview.text; $('confirm-check').checked = false;
@@ -597,8 +668,8 @@
   $('new-message').addEventListener('click', () => { preview = null; $('body').value = ''; $('schedule-enabled').checked = false; $('send-result').textContent = ''; saveDraft(); updateCompose(); });
   $('compose-open').addEventListener('click', action(async () => { await operation('open', { lead_id: Number($('to').value) }, 'Opening and verifying this number in the background…'); await loadContacts(); $('send-result').textContent = 'Conversation opened without taking Windows focus.'; }));
   $('contact-form').addEventListener('submit', action(async () => {
-    const result = await operation('contacts', { phone: $('contact-phone').value, company_name: $('contact-company').value }, 'Adding and verifying the Android contact…');
-    $('contact-form').reset(); $('add-panel').open = false; await loadContacts(); $('contact-status').textContent = `Added #${result.id}: ${result.contact_name}.`;
+    const result = await operation('contacts', { phone: $('contact-phone').value, company_name: $('contact-company').value }, 'Verifying the number in the selected Viber instance…');
+    $('contact-form').reset(); $('add-panel').open = false; await loadContacts(); $('contact-status').textContent = `Added #${result.id}: ${result.company_name} · ${result.viber_name}.`;
   }));
   $('contact-search').addEventListener('input', () => { contactPage = 0; renderContacts(); });
   $('contact-prev').addEventListener('click', () => { contactPage--; renderContacts(); });
@@ -627,12 +698,42 @@
   setInterval(() => { if (preview) updateCompose(); if (campaignPreview) updateCampaignControls(); }, 1000);
   setInterval(() => {
     updateCountdowns();
-    if (csrf && !document.hidden && view === 'scheduled' && !busy && offsets.scheduled <= 100) loadRecords('scheduled').catch(showError);
-    if (csrf && !document.hidden && view === 'campaigns' && !busy && !campaignWorking && !campaignPending) loadCampaigns().catch(showError);
-    if (csrf && !document.hidden && view === 'inbox' && !busy && databaseOffset <= 50) loadDatabaseInbox().catch(showError);
+    if (csrf && instanceReady && !document.hidden && view === 'scheduled' && !busy && offsets.scheduled <= 100) loadRecords('scheduled').catch(showError);
+    if (csrf && instanceReady && !document.hidden && view === 'campaigns' && !busy && !campaignWorking && !campaignPending) loadCampaigns().catch(showError);
+    if (csrf && instanceReady && !document.hidden && view === 'inbox' && !busy && databaseOffset <= 50) loadDatabaseInbox().catch(showError);
   }, 5000);
+  async function loadInstances() {
+    let result;
+    try { result = await api('instances'); }
+    catch (error) { if (error.status === 404) { instanceReady = true; return; } throw error; }
+    multipleInstances = true;
+    const slot = result.instances.find(item => item.id === selectedAccount);
+    if (!slot) throw new Error('Choose one of the two new Viber instances.');
+    $('sender').replaceChildren(...result.instances.map(item => {
+      const option = node('option', `${item.label} · ${item.phone || 'link a new number'}`);
+      option.value = item.id; return option;
+    }));
+    $('sender').value = selectedAccount;
+    instanceReady = slot.state === 'READY';
+    $('instance-setup').hidden = instanceReady;
+    $('instance-setup').textContent = `${slot.label}: open the ${slot.vm_name} window and link your new Viber number. The dashboard will connect automatically. Existing contacts are ignored. Automatic replies are enabled by default after your number is verified.` + (slot.state === 'BLOCKED' ? ` ${slot.error || ''}` : '');
+    document.querySelector('main').hidden = !instanceReady;
+    document.querySelector('.viber-nav').hidden = !instanceReady;
+    $('read-current').disabled = !instanceReady;
+    if (!instanceReady) $('status').textContent = 'Two new Viber instances · waiting for account linking';
+  }
+  $('sender').addEventListener('change', () => {
+    if (!multipleInstances) return;
+    const url = new URL(location.href); url.searchParams.set('account', $('sender').value); location.assign(url.href);
+  });
+  setInterval(async () => {
+    if (!csrf || !multipleInstances || instanceReady || document.hidden) return;
+    try { await loadInstances(); if (instanceReady) location.reload(); } catch (error) { showError(error); }
+  }, 3000);
   action(async () => {
-    const session = await api('session', {}); csrf = session.csrf; await loadContacts();
+    const session = await api('session', {}); csrf = session.csrf;
+    await loadInstances(); if (!instanceReady) return;
+    await loadContacts();
     try { const draft = JSON.parse(localStorage.getItem(draftKey) || 'null'); if (draft) {
       $('to').value = draft.lead_id || ''; $('body').value = draft.text || '';
       $('schedule-enabled').checked = !!draft.schedule_enabled; $('schedule-mode').value = draft.schedule_mode === 'delay' ? 'delay' : 'datetime';

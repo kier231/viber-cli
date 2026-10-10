@@ -240,6 +240,15 @@ def main(argv: list[str] | None = None) -> int:
             if index >= option_end or arg not in {"--debug", "--foreground"}]
     options = (["--debug"] if debug else []) + (["--foreground"] if foreground else [])
     args = parser.parse_args(options + argv)
+    from app.runtime import settings
+    if settings().get('VIBER_DATABASE_URL'):
+        from app.controller_cli import dispatch as controller_dispatch
+        try:
+            controller_dispatch(args)
+            return 0
+        except Exception as exc:
+            print(f'ERROR: {exc}',file=sys.stderr)
+            return 1
     store = LeadStore(os.environ.get("VIBER_CLI_DB", DEFAULT_DB))
     try:
         if args.command is None:

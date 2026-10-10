@@ -1,4 +1,10 @@
 __pycache__/
+.env
+*-tests.log
+.controller.lock
+backups/
+benchmark-results/
+*.runtime.json
 *.py[cod]
 .venv/
 .pytest_cache/
@@ -7,3 +13,14 @@ leads.sqlite3-*
 *.sqlite3.web.lock
 .web*.log
 *.db
+# Local credentials, customer captures and private owner instructions.
+private/
+data/instances.json
+vm-credential.xml
+*.password
+automatic-replies-enabled.png
+viber-inbox.jpg
+viber-vm-*.png
+prompts/sajtolog-replies.txt
+scripts/repair_cancelled_mihajlo_reply.py
+scripts/verify_reply_recovery.py

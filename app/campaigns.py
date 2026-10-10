@@ -100,6 +100,8 @@ def init_campaign_schema(db):
     campaign_columns = {row[1] for row in db.execute("PRAGMA table_info(web_campaigns)")}
     if "acknowledged_errors" not in campaign_columns:
         db.execute("ALTER TABLE web_campaigns ADD COLUMN acknowledged_errors TEXT NOT NULL DEFAULT '[]'")
+    if 'account_id' not in campaign_columns:
+        db.execute("ALTER TABLE web_campaigns ADD COLUMN account_id TEXT NOT NULL DEFAULT 'current'")
     db.execute("CREATE INDEX IF NOT EXISTS web_sends_campaign ON web_sends(campaign_id,state)")
     db.execute("CREATE INDEX IF NOT EXISTS web_sends_due ON web_sends(state,scheduled_at)")
 
@@ -110,7 +112,7 @@ class CampaignManager:
         self.previews = {}
 
     def _event(self, db, kind, detail):
-        db.execute("INSERT INTO web_events(created_at,kind,detail) VALUES(?,?,?)", (utc_now(), kind, detail))
+        db.execute("INSERT INTO web_events(created_at,kind,detail,account_id) VALUES(?,?,?,?)", (utc_now(), kind, detail,self.service.account_id))
 
     def _get(self, db, campaign_id):
         if not isinstance(campaign_id, str):
@@ -118,6 +120,8 @@ class CampaignManager:
         row = db.execute("SELECT * FROM web_campaigns WHERE id=?", (campaign_id,)).fetchone()
         if not row:
             raise ValueError("Campaign not found.")
+        if self.service.managed and row['account_id'] != self.service.account_id:
+            raise PermissionError('Campaign belongs to another account.')
         return dict(row)
 
     @staticmethod
@@ -140,6 +144,7 @@ class CampaignManager:
                 raise ValueError("The localhost app is stopping.")
             existing = db.execute("SELECT * FROM web_campaigns WHERE creation_key=?", (request_key,)).fetchone()
             if existing:
+                self._get(db, existing['id'])
                 if existing["creation_hash"] != fingerprint:
                     raise ValueError("This submission key belongs to another campaign.")
                 return self._detail(db, dict(existing))
@@ -168,9 +173,9 @@ class CampaignManager:
             self._check_horizon(slots)
             messages = [validate_message(expand_message(template, lead)) for lead in leads]
             campaign_id = str(uuid.uuid4())
-            db.execute("INSERT INTO web_campaigns(id,creation_key,creation_hash,name,template,rules,state,created_at,updated_at,duplicates_skipped) "
-                       "VALUES(?,?,?,?,?,?,'DRAFT',?,?,?)", (campaign_id, request_key, fingerprint, name.strip(), template,
-                       json.dumps(rules), utc_now(), utc_now(), len(ids) - len(leads)))
+            db.execute("INSERT INTO web_campaigns(id,creation_key,creation_hash,name,template,rules,state,created_at,updated_at,duplicates_skipped,account_id) "
+                       "VALUES(?,?,?,?,?,?,'DRAFT',?,?,?,?)", (campaign_id, request_key, fingerprint, name.strip(), template,
+                       json.dumps(rules), utc_now(), utc_now(), len(ids) - len(leads),self.service.account_id))
             for lead, text, slot in zip(leads, messages, slots):
                 send_id = str(uuid.uuid4())
                 db.execute("INSERT INTO web_sends(id,request_key,preview_hash,operation_id,lead_id,phone,company_name,"
@@ -205,7 +210,7 @@ class CampaignManager:
 
     def list(self):
         with closing(self.service.store._connect()) as db:
-            return [self._summary(db, dict(row)) for row in db.execute("SELECT * FROM web_campaigns ORDER BY created_at DESC,rowid DESC LIMIT 100")]
+            return [self._summary(db, dict(row)) for row in db.execute("SELECT * FROM web_campaigns" + (" WHERE account_id=?" if self.service.managed else '') + " ORDER BY created_at DESC,rowid DESC LIMIT 100",(self.service.account_id,) if self.service.managed else ())]
 
     def detail(self, campaign_id):
         with closing(self.service.store._connect()) as db:
