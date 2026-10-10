@@ -45,7 +45,7 @@ try:
     process.wait(timeout=45)
 except psutil.TimeoutExpired:
     raise RuntimeError('Old controller is still running. Replacement blocked.') from None
-files=['app/auto_replies.py','app/reply_errors.py','app/codex_replies.py','app/reply_voice.py','app/web_service.py',
+files=['app/auto_replies.py','app/reply_errors.py','app/codex_replies.py','app/reply_voice.py','app/web_service.py','app/client_descriptions.py',
        'app/job_queue.py','app/viber_watcher.py','app/vm_bridge.py','app/viber_background.py',
        'app/vm_agent.py','web/viber.js']
 hashes={}

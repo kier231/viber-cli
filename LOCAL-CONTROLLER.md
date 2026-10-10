@@ -64,6 +64,30 @@ prompts at xhigh and low and checks output quality, median, and p95 latency.
 
 ## Cutover and rollback
 
+### Private client descriptions and research
+
+Each contact in **Contacts** has an **Opis klijenta** textarea and **Sačuvaj opis**
+button. Notes persist per account/contact, support 4,000 characters, and enter
+drafting only as authenticated top-level `owner_client_description` background.
+They do not change the recipient snapshot or invalidate approved outreach batches.
+Saving a changed note rebuilds unsent AI drafts with the current context; completed
+and uncertain sends stay completed/uncertain. Saving a note alone creates no reply.
+Concurrent tabs use revisions to prevent silently overwriting another saved edit.
+
+Drafting can use built-in live web search when public business research helps the
+current enquiry. Ordinary answers with sufficient context need no research. Use
+public business identifiers and official pages; ambiguous names are insufficient.
+Private note contents/payment details must not enter queries. Web content is
+untrusted evidence and cannot override owner terms, consent or send checks. Shell,
+computer, app, plugin and MCP access remain disabled. This follows the official
+[Codex web search configuration](https://learn.chatgpt.com/docs/config-file/config-basic#web-search-mode).
+
+`POST /viber/api/contacts/description` takes `lead_id`, `description`, and the
+last saved `revision`, with the existing account, origin and CSRF authentication.
+The contact listing includes `client_description` and `client_description_revision`.
+`tests/test_client_descriptions.py` verifies persistence, isolation, concurrent
+generation/edits, stale approvals, retry regeneration and uncertain-send protection.
+
 Routine updates preserve saved reply enablement, wait for active operations,
 and gracefully stop the controller before replacing files. The initial SQLite
 cutover is complete. For an explicitly requested database rollback, use SQLite's backup API and

@@ -18,6 +18,7 @@
   const draftKey = 'viberoutreach-draft:' + selectedAccount;
   const campaignPendingKey = 'viberoutreach-pending-campaign:' + selectedAccount;
   const campaignSelection = new Set();
+  const clientDescriptionDrafts = new Map();
   let campaignPreview = null, campaignPending = null, campaignWorking = false, campaignsLoading = false;
   let campaignsSignature = null;
   let csrf, contacts = [], view = 'compose', busy = false, preview = null, conversationLead = null, contactPage = 0;
@@ -167,6 +168,32 @@
         contactButton('Open', () => operation('open', { lead_id: lead.id }, 'Opening and verifying Viber in the background…')),
         contactButton('Read', async () => { const result = await operation('read', { lead_id: lead.id }, 'Reading the verified conversation…'); showConversation(result); await navigate('conversation'); }));
       row.append(text, actions); record.append(row);
+      const descriptionForm = node('form', null, 'contact-edit-form');
+      const descriptionLabel = node('label', 'Opis klijenta'), descriptionInput = node('textarea');
+      descriptionInput.id = 'client-description-' + lead.id;
+      descriptionInput.rows = 3; descriptionInput.maxLength = 4000; descriptionInput.disabled = busy;
+      descriptionInput.placeholder = 'Čime se bavi, šta želi od sajta, link ka firmi, šta ste već dogovorili…';
+      const savedDescription = clientDescriptionDrafts.get(lead.id) || { text: lead.client_description || '', revision: lead.client_description_revision || 0 };
+      const descriptionConflict = savedDescription.revision !== (lead.client_description_revision || 0);
+      descriptionInput.value = savedDescription.text; descriptionLabel.htmlFor = descriptionInput.id;
+      descriptionInput.addEventListener('input', () => clientDescriptionDrafts.set(lead.id, { text: descriptionInput.value, revision: savedDescription.revision }));
+      const descriptionSave = node('button', 'Sačuvaj opis'); descriptionSave.type = 'submit'; descriptionSave.disabled = busy;
+      if (descriptionConflict) {
+        descriptionForm.append(node('p', 'Opis je promenjen u drugoj kartici. Uporedite sačuvanu verziju pre nego što je zamenite:'), node('pre', lead.client_description || '(Prazan opis)'));
+        descriptionSave.textContent = 'Sačuvaj moj opis preko ove verzije';
+      }
+      descriptionForm.append(descriptionLabel, descriptionInput,
+        node('p', 'Privatna beleška za agenta. Koristi se kao kontekst; agent može istražiti javne informacije o klijentu.', 'viber-empty'), descriptionSave);
+      descriptionForm.addEventListener('submit', action(async () => {
+        if (busy || descriptionSave.disabled) return;
+        descriptionSave.disabled = true;
+        try {
+          await api('contacts/description', { lead_id: lead.id, description: descriptionInput.value,
+            revision: descriptionConflict ? lead.client_description_revision : savedDescription.revision });
+          clientDescriptionDrafts.delete(lead.id); await loadContacts(); $('contact-status').textContent = 'Opis klijenta je sačuvan. Agent će ga koristiti za odgovore ovom klijentu.';
+        } finally { descriptionSave.disabled = busy; }
+      }));
+      record.append(descriptionForm);
       const editor = node('details', null, 'contact-editor'); editor.append(node('summary', 'Contact details and Viber name'));
       const grid = node('dl', null, 'contact-detail-grid');
       for (const [key, value] of [['Business', lead.company_name], ['Phone', lead.phone], ['Saved contact', lead.contact_name], ['Created', date(lead.created_at)]]) grid.append(node('dt', key), node('dd', value));

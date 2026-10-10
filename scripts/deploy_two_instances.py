@@ -14,7 +14,7 @@ with socket.socket() as sock:
         raise ValueError('Stop the previous controller before replacing its files.')
 backup = Path(manifest['backup'])/'previous-controller'
 files = ['web.py','app/accounts.py','app/auto_replies.py','app/campaigns.py','app/controller.py',
-         'app/instances.py','app/reply_feedback.py','app/web_service.py','app/web_server.py',
+         'app/instances.py','app/reply_feedback.py','app/web_service.py','app/web_server.py','app/client_descriptions.py',
          'app/vm_agent.py','app/viber_inbox.py','web/viber.html','web/viber.js','scripts/start_viber_vm.ps1',
          'scripts/start_outreach_host.ps1','scripts/start_two_instances_host.ps1']
 for name in files:

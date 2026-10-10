@@ -47,5 +47,23 @@ class CodexRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'attempted a tool'):
                 generator.generate({'messages':[]},'Reply')
 
+    def test_web_research_allowed_with_all_other_integrations_still_disabled(self):
+        generator = self.generator()
+        captured = []
+        def launch(command, **kwargs):
+            captured.extend(command)
+            Path(command[command.index('-o')+1]).write_text(json.dumps(
+                {'action': 'reply', 'text': 'Možemo dodati galeriju.', 'reason': 'Public business research', 'assumptions': []}), encoding='utf-8')
+            events = '\n'.join(json.dumps({'type': 'item.completed', 'item': {'type': kind}})
+                               for kind in ('web_search', 'reasoning', 'agent_message'))
+            return Mock(returncode=0, communicate=lambda *_a, **_k: (events, ''))
+        with patch('app.codex_replies.subprocess.Popen', side_effect=launch):
+            result = generator.generate({'owner_client_description': 'Salon'}, 'Reply')
+        self.assertEqual(result['action'], 'reply')
+        self.assertIn('web_search="live"', captured)
+        for key in ('shell_tool', 'apps', 'plugins', 'computer_use', 'multi_agent'):
+            self.assertIn('features.' + key + '=false', captured)
+        self.assertIn('mcp_servers={}', captured)
+
 
 if __name__=='__main__': unittest.main()

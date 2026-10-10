@@ -23,6 +23,7 @@ from app.viber import ViberError
 from app.viber_background import BackgroundViberClient, _usable_viber_name
 from app.viber_watcher import DatabaseWatcher, WorkerSource
 from app.auto_replies import AutoReplies
+from app.client_descriptions import ClientDescriptions
 from app.storage import postgres
 from app.accounts import Accounts
 from app.job_queue import DesktopQueue, JobQueue
@@ -130,6 +131,7 @@ class WebService:
                 raise
             self.watcher.accounts = self.accounts
             self.watcher.inbox.accounts = self.accounts
+        self.client_descriptions = ClientDescriptions(self)
         self.replies = AutoReplies(self)
         self.watcher.on_ingest = self.replies.wake.set
         self.pool = DesktopQueue(self) if self.managed else ThreadPoolExecutor(max_workers=1, thread_name_prefix='viber-desktop')
@@ -275,7 +277,9 @@ class WebService:
             with closing(self.store._connect()) as db:
                 owned = {r[0] for r in db.execute('SELECT phone FROM contact_owners WHERE account_id=?', (self.accounts.account_id,))}
             rows = [r for r in rows if r.phone in owned]
-        return [asdict(lead) for lead in rows]
+        descriptions = self.client_descriptions.all()
+        return [{**asdict(lead), 'client_description': descriptions.get(lead.id, {}).get('description', ''),
+                 'client_description_revision': descriptions.get(lead.id, {}).get('revision', 0)} for lead in rows]
 
     def add_contact(self, payload):
         phone = normalize_serbian_phone(payload.get("phone"))

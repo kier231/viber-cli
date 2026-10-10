@@ -72,6 +72,7 @@ class AutoReplies:
             if 'assumptions' not in columns:
                 db.execute("ALTER TABLE auto_reply_jobs ADD COLUMN assumptions TEXT NOT NULL DEFAULT '[]'")
             for column, declaration in (('retry_count','INTEGER NOT NULL DEFAULT 0'),
+                                        ('client_description_revision','INTEGER NOT NULL DEFAULT 0'),
                                         ('retry_at','TEXT'),('retry_phase','TEXT'),('error_code','TEXT'),
                                         ('outgoing_event_id','INTEGER'),('outgoing_confirmed_at','TEXT')):
                 if column not in columns:
@@ -295,10 +296,11 @@ class AutoReplies:
             lead = next((r for r in leads if r['viber_name']), leads[0])
             job_id = str(uuid.uuid4())
             db.execute('''INSERT INTO auto_reply_jobs(id,source_id,chat_id,trigger_id,revision,settings_revision,
-                phone,lead_snapshot,send_fingerprint,state,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,'GENERATING',?,?)''',
+                phone,lead_snapshot,send_fingerprint,client_description_revision,state,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,'GENERATING',?,?)''',
                 (job_id, latest['source_id'], latest['chat_id'], latest['event_id'], latest['revision'], settings['revision'],
-                 latest['phone'], json.dumps(lead), self._send_fingerprint(db, latest['phone']), utc_now(), utc_now()))
+                 latest['phone'], json.dumps(lead), self._send_fingerprint(db, latest['phone']),
+                 self.service.client_descriptions.get(db, lead['id'])['revision'], utc_now(), utc_now()))
             db.executemany('INSERT INTO auto_reply_events VALUES(?,?,?)', [(r['source_id'],r['event_id'],job_id) for r in group])
             db.execute('UPDATE auto_reply_jobs SET detection_ms=? WHERE id=?',(max(0,int(datetime.fromisoformat(latest['first_seen_at']).timestamp()*1000)-latest['timestamp_ms']),job_id))
             return job_id
@@ -330,6 +332,9 @@ class AutoReplies:
             chat = db.execute('SELECT revision FROM viber_conversations WHERE source_id=? AND chat_id=?',
                               (job['source_id'], job['chat_id'])).fetchone()
             reuse = job['state']=='RETRY' and job['retry_phase']=='dispatch' and job['text'] and chat and chat['revision']==job['revision']
+            description = self.service.client_descriptions.get(db, json.loads(job['lead_snapshot'])['id'])
+            reuse = reuse and description['revision'] == job['client_description_revision']
+            job['client_description_revision'] = description['revision']
             if chat:
                 job['revision'] = chat['revision']
             try:
@@ -343,9 +348,9 @@ class AutoReplies:
                 db.execute("UPDATE auto_reply_jobs SET state='STALE',reason=?,updated_at=? WHERE id=?",
                            (str(exc), utc_now(), job['id']))
                 continue
-            db.execute("""UPDATE auto_reply_jobs SET state='GENERATING',revision=?,text=?,
+            db.execute("""UPDATE auto_reply_jobs SET state='GENERATING',revision=?,client_description_revision=?,text=?,
                 retry_phase=?,retry_at=NULL,updated_at=? WHERE id=? AND state IN ('REGENERATE','RETRY')""",
-                (job['revision'],job['text'] if reuse else '', 'dispatch' if reuse else 'generation',utc_now(),job['id']))
+                (job['revision'],job['client_description_revision'],job['text'] if reuse else '', 'dispatch' if reuse else 'generation',utc_now(),job['id']))
             return job['id']
         return None
 
@@ -376,6 +381,9 @@ class AutoReplies:
             lead = db.execute('SELECT * FROM leads WHERE id=?', (json.loads(job['lead_snapshot'])['id'],)).fetchone()
             if not lead or dict(lead) != json.loads(job['lead_snapshot']):
                 raise ValueError('Saved contact changed. No message sent.')
+            description = self.service.client_descriptions.get(db, lead['id'])
+            if description['revision'] != job['client_description_revision']:
+                raise ConversationRevisionChanged('Opis klijenta changed. Rebuilding the unsent reply with updated context.')
             if self._send_fingerprint(db, job['phone'], job['send_id']) != job['send_fingerprint']:
                 raise ValueError('Another send changed this conversation. Draft cancelled.')
             if db.execute("SELECT 1 FROM web_sends WHERE phone=? AND id!=? AND (state IN ('QUEUED','SUBMITTING') OR (state='UNKNOWN' AND rowid>?)) LIMIT 1",
@@ -387,7 +395,7 @@ class AutoReplies:
             if any(m['direction'] not in ('INCOMING','OUTGOING') or not m['sender_verified'] for m in messages):
                 raise ValueError('Message sender or direction needs review.')
             context = {'contact': {'business_name': lead['company_name'], 'viber_name': lead['viber_name'] or chat['viber_name']},
-                       'messages': messages}
+                       'messages': messages, 'owner_client_description': description['description']}
             # Preserve earlier captured facts when Viber drops older rows.
             # These records never become triggers or replace current messages.
             context['retained_background'] = [dict(r) for r in db.execute('''
@@ -524,7 +532,9 @@ class AutoReplies:
             try:
                 self._context(job)
             except Exception as exc:
-                self._update(job['id'],'STALE',str(exc))
+                with self.dispatch_lock, closing(self.inbox.connect()) as db, db:
+                    db.execute("UPDATE auto_reply_jobs SET state='STALE',reason=?,updated_at=? WHERE id=? AND state='DRAFT'",
+                               (str(exc), utc_now(), job['id']))
 
     def regenerate(self, job_id):
         if not self.review or not isinstance(job_id, str):

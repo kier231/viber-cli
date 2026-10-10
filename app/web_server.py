@@ -196,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get('source_id'), payload.get('chat_id'), payload.get('enabled')))
             if path == "/viber/api/contacts":
                 result = service.add_contact(payload)
+            elif path == '/viber/api/contacts/description':
+                return self._reply(200, service.client_descriptions.save(
+                    payload.get('lead_id'), payload.get('description'), payload.get('revision')))
             elif path == "/viber/api/campaigns":
                 return self._reply(201, service.campaigns.create(payload))
             elif path == "/viber/api/campaign-review":

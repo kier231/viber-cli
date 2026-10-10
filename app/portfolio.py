@@ -104,6 +104,7 @@ def candidates(context, limit=4):
     # Incoming correspondence describes the customer's business; outgoing
     # portfolio links must not steer the next retrieval to our own industry.
     query = tokens(' '.join(str(v or '') for v in context['contact'].values()) + ' ' +
+                   context.get('owner_client_description', '') + ' ' +
                    ' '.join(m['body'] or '' for m in context['messages'][-20:] if m['direction'] == 'INCOMING'))
     categories = {}
     for row in records:

@@ -80,6 +80,23 @@ class WebServerTests(unittest.TestCase):
         self.assertIn(b'Compose Scheduled Contacts Campaigns Daily activity', body)
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
 
+    def test_description_requires_browser_auth_and_persists_without_desktop_operation(self):
+        service = self.server.service
+        lead = service.store.create_with_android('+381641234567', 'Salon', lambda *_: None)
+        payload = json.dumps({'lead_id': lead.id, 'description': 'Želi galeriju.', 'revision': 0})
+        path = '/viber/api/contacts/description'
+        self.assertEqual(self.request(path, 'POST', payload, {'Content-Type': 'application/json'})[0], 403)
+        token = self.session()
+        headers = {'Origin': self.origin, 'Content-Type': 'application/json', 'X-Viber-Browser': '1', 'X-Viber-CSRF': token}
+        status, _, body = self.request(path, 'POST', payload, headers)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)['revision'], 1)
+        status, _, body = self.request('/viber/api/contacts', headers=headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)[0]['client_description'], 'Želi galeriju.')
+        self.assertEqual(service.pending, 0)
+        self.assertEqual(self.request(path, 'POST', payload, headers)[0], 400)
+
     def test_email_proxy_preserves_csrf_and_isolates_cookie(self):
         status, headers, _ = self.request("/browser/session", "POST", "{}", {
             "Origin": self.origin, "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin",
