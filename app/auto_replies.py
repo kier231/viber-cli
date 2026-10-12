@@ -16,6 +16,7 @@ from app.reply_feedback import ReplyFeedback
 from app.viber_database import international_phone
 from app.viber_inbox import utc_now
 from app.reply_errors import ReplyRetryable, ViberRetryable
+from app.reply_voice import closed_offer_acknowledgement
 
 
 class ConversationRevisionChanged(ValueError):
@@ -453,7 +454,9 @@ class AutoReplies:
             job = self._job(job_id)
             with self.service.generation_limit:
                 context, instructions = self._context(job)
-                if job['retry_phase']=='dispatch' and job['text']:
+                if closed_offer_acknowledgement(context):
+                    result = {'action': 'hold', 'text': '', 'reason': 'Acknowledgement after the discount closing; no repeated offer.', 'assumptions': []}
+                elif job['retry_phase']=='dispatch' and job['text']:
                     result = validate_result({'action':'reply','text':job['text'],'reason':job['reason'] or '',
                                               'assumptions':json.loads(job['assumptions'])})
                 else:

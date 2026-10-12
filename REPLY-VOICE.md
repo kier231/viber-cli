@@ -103,7 +103,7 @@ generated reply becomes the next turn's actual history.
 | "A cenovnik?" after agreeing scope | "Mogu da dodam i cenovnik." |
 | A real concern | A brief "Razumem" can fit; answer the concern concretely. |
 | "Šta je uključeno?" | List relevant inclusions, without an unsolicited exclusions/upsell paragraph. |
-| Ordinary decline | One polite closing with the owner's authorized offer; no question or further follow-up. |
+| Ordinary decline | One brief closing with the authorized offer, once per conversation; no unsolicited friend-transfer wording. A later thanks or thumbs-up receives no message. A new service enquiry reopens the conversation. |
 
 These are editorial goals, not an AI-authorship detector. We do not manufacture
 typos, personal stories, fake hesitation or human-identity claims. Naturalness does

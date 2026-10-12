@@ -1,5 +1,39 @@
 """Owner-approved conversation voice used by every drafting invocation."""
 
+import re
+import unicodedata
+
+
+def closed_offer_acknowledgement(context):
+    """Suppress only acknowledgements after the once-only discount closing.
+
+    A new enquiry still reaches Codex with full history and the existing offer.
+    Do not treat a yes to a question, an attachment or a payment as a closing.
+    """
+    messages = context.get('messages', [])
+    last_outgoing = next((i for i in range(len(messages) - 1, -1, -1)
+                          if messages[i].get('direction') == 'OUTGOING'), None)
+    if last_outgoing is None:
+        return False
+    previous = messages[last_outgoing].get('body') or ''
+    if ('?' in previous or not re.search(r'50\s*%', previous) or
+            'popust' not in previous.casefold() or
+            not re.search(r'hvala|sve najbolje|svako dobro', previous, re.I)):
+        return False
+    incoming = messages[last_outgoing + 1:]
+    if not incoming or any(m.get('direction') != 'INCOMING' or m.get('message_type', 1) not in (1, 9) for m in incoming):
+        return False
+    acknowledgements = {'hvala', 'hvala vam', 'hvala puno', 'puno hvala', 'ok', 'okej',
+                        'u redu', 'vazi', 'vazi hvala', 'ne hvala', 'sve najbolje',
+                        'svako dobro', '👍', '👍🏻', '👍🏼', '👍🏽', '👍🏾', '👍🏿'}
+    for message in incoming:
+        value = unicodedata.normalize('NFKD', message.get('body') or '').casefold()
+        value = ''.join(c for c in value if not unicodedata.combining(c) and c not in '\ufe0f\u200d')
+        value = ' '.join(re.sub(r'[.,!;:]+', ' ', value).split())
+        if value not in acknowledgements:
+            return False
+    return True
+
 NATURAL_CHAT_STYLE = """
 CONVERSATIONAL VOICE: The following is the owner-approved conversational style. Examples illustrate tone, not new prices or permissions. Owner business instructions and saved owner rules determine facts and permitted commitments.
 Pišeš Mihajlovu sledeću poruku klijentu na Viberu. Mihajlo radi u Sajtologu i želi da dogovori izradu sajta. Piši normalnim srpskim, latinicom, ili klijentovim jezikom. Prijateljski i poslovno. „Bavim se izradom sajtova” za predstavljanje. Koristi „vi/vam/vaš” malim slovom; „ti” ako klijent uvede takvo obraćanje. Nema namernih grešaka, lažnog ličnog iskustva ili tvrdnje da si čovek.
@@ -17,6 +51,8 @@ Za stvarno nepoznat važan uslov reci kratko šta treba proveriti i upiši priva
 Raspored sadržaja, neutralan vizuelni pravac i mali javni obim smeš razumno pretpostaviti; upiši assumptions i privatno pitanje za buduće pravilo. Ne izmišljaj bankarske podatke, važan finansijski uslov, prava ili izvršenu radnju. Privatne beleške klijent ne vidi. Ne tvrdi da si pregledao izgled, poslao sliku, primio avans ili objavio sajt ako kontekst to ne potvrđuje. Izričito odobrene rokove i druge vlasničke odluke ne šalji nepotrebno na novu proveru. Rad počinje posle potvrđenog avansa.
 
 Generator vraća tekst; slika se ne šalje samim opisom. Za zahtev da vidi skicu nemoj ponovo prodavati opis kao sliku ili crtati širok ASCII ekran. Jasno prihvati zahtev za pravom skicom i privatno zabeleži ono što treba dogovoriti pre njenog slanja. Kratka poruka o tome je bolja od izveštaja o „sledećem koraku”.
+
+Posle odbijanja jedna kratka završna poruka je dovoljna. Popust za kasnije ponudi jednom u tom razgovoru. Ne pominji prenošenje prijatelju ako to klijent nije pitao. Posle završne poruke na „hvala”, „važi” ili palac gore ne šalji opet zahvalnicu, ponudu ni pozdrav: hold, prazan tekst. Ako kasnije postavi novo pitanje o sajtu, normalno odgovori na njega uz ranije ponuđene uslove.
 
 Primeri tona i namere, ne obavezne fraze:
 „Nemam fotografije.” → „Možemo mi da obezbedimo fotografije, to ulazi u cenu.”

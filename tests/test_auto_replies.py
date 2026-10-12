@@ -107,6 +107,21 @@ class AutoReplyTests(unittest.TestCase):
             time.sleep(.01)
         self.assertEqual(self.service.pending, 0)
 
+    def test_discount_closing_acknowledgement_does_not_generate_or_send_again(self):
+        self.incoming(message(2, 'OUTGOING', body='Hvala na odgovoru. Ako kasnije zatreba sajt, imate 50% popusta na izradu.'),
+                      message(3, body='👍'))
+        self.run_reply()
+        self.assertEqual(self.generator.contexts, [])
+        self.assertEqual(self.desktop.sent, [])
+        self.assertEqual(self.replies.jobs()[0]['state'], 'HELD')
+
+    def test_new_enquiry_after_discount_closing_still_generates_and_sends(self):
+        self.incoming(message(2, 'OUTGOING', body='Hvala na odgovoru. Ako kasnije zatreba sajt, imate 50% popusta na izradu.'),
+                      message(3, body='Ipak me zanima, koliko bi bio sajt sa zakazivanjem?'))
+        self.run_reply()
+        self.assertEqual(len(self.generator.contexts), 1)
+        self.assertEqual(self.desktop.sent, ['Zdravo!'])
+
     def test_reply_once_full_context_and_names_preserved(self):
         self.incoming(message(2))
         self.run_reply()

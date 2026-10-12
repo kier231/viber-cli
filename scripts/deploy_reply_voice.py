@@ -60,7 +60,7 @@ def main():
             raise ValueError('Owner settings changed during shutdown; do not overwrite them.')
         if db.execute("SELECT 1 FROM auto_reply_jobs WHERE state IN ('GENERATING','QUEUED','SUBMITTING','RETRY','REGENERATE','DRAFT')").fetchone():
             raise ValueError('New work arrived during shutdown. Restart and drain before retrying.')
-    files=['app/codex_replies.py','app/reply_voice.py','app/portfolio.py','data/portfolio.json',
+    files=['app/codex_replies.py','app/reply_voice.py','app/auto_replies.py','app/portfolio.py','data/portfolio.json',
            'prompts/sajtolog-replies.txt','prompts/sajtolog-replies.example.txt',
            'REPLY-VOICE.md','scripts/evaluate_reply_voice.py','scripts/verify_approved_voice.py',
            'scripts/deploy_reply_voice.py']
