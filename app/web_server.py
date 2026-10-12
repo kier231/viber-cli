@@ -160,6 +160,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(200, result)
             if path == "/viber/api/contacts":
                 return self._reply(200, service.contacts())
+            if path == '/viber/api/contact-folders':
+                return self._reply(200, service.contact_folders.list())
             if path == "/viber/api/campaigns":
                 return self._reply(200, service.campaigns.list())
             if path.startswith("/viber/api/campaigns/"):
@@ -198,7 +200,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/viber/api/contacts":
                 result = service.add_contact(payload)
             elif path == '/viber/api/contacts/import':
-                return self._reply(200, service.csv_import.import_leads(payload.get('csv')))
+                return self._reply(200, service.csv_import.import_leads(payload.get('csv'), payload.get('folder_id')))
+            elif path == '/viber/api/contact-folders':
+                return self._reply(201, service.contact_folders.create(payload.get('name')))
+            elif path == '/viber/api/contact-folders/delete':
+                return self._reply(200, service.contact_folders.delete(payload.get('folder_id')))
+            elif path == '/viber/api/contacts/move':
+                return self._reply(200, service.contact_folders.move(payload.get('lead_id'), payload.get('folder_id')))
             elif path == '/viber/api/contacts/description':
                 return self._reply(200, service.client_descriptions.save(
                     payload.get('lead_id'), payload.get('description'), payload.get('revision')))

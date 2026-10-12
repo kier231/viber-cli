@@ -79,6 +79,7 @@
         <form id="campaign-form">
           <fieldset id="campaign-fields">
             <label for="campaign-name">Campaign name</label><input id="campaign-name" maxlength="120" required placeholder="October outreach">
+            <label for="campaign-folder">Contact folder</label><select id="campaign-folder"><option value="">All contacts</option></select>
             <label for="campaign-search">Choose recipients</label><input id="campaign-search" type="search" placeholder="Search business, Viber name, or number">
             <div class="campaign-selection-tools"><label for="campaign-batch-size">Batch size</label><input id="campaign-batch-size" type="number" min="1" value="1000"><button id="campaign-select" type="button">Select first 1000</button><button id="campaign-select-all" type="button">Select all matching</button><button id="campaign-clear" type="button">Clear selection</button></div>
             <p id="campaign-selection-count" class="hint" role="status"></p>
@@ -117,6 +118,15 @@
     <section id="contacts" aria-labelledby="contacts-title" hidden>
       <h2 id="contacts-title">Viber contacts</h2>
       <p class="hint">Contacts belong to the selected sending account. Business names and the person's Viber name are stored separately.</p>
+      <form id="contact-folder-form" class="inline-form">
+        <label for="contact-folder-name">New folder name</label>
+        <div><input id="contact-folder-name" maxlength="100" required placeholder="Production test 1"><button type="submit">Create folder</button></div>
+      </form>
+      <div class="list-picker">
+        <label for="contact-folder">Contact folder</label>
+        <div><select id="contact-folder"><option value="">All contacts</option></select><button id="contact-folder-delete" type="button" disabled>Delete empty folder</button></div>
+      </div>
+      <p id="contact-folder-hint" class="hint"></p>
       <details id="csv-panel" class="campaign-card">
         <summary>Import CSV leads</summary>
         <form id="csv-form">

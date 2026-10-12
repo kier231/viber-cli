@@ -179,6 +179,11 @@ class CampaignManager:
             if not isinstance(ids, list) or not ids:
                 raise ValueError("Select at least one contact.")
             selected = self._leads(db, ids)
+            if payload.get('folder_id'):
+                folder = self.service.contact_folders.require(db, payload['folder_id'])
+                members = self.service.contact_folders.members(db)
+                if any(members.get(lead_id, self.service.contact_folders.main_id) != folder['id'] for lead_id in ids):
+                    raise ValueError('Choose recipients from the selected contact folder.')
             leads, phones = [], set()
             for lead_id in ids:
                 lead = selected[lead_id]

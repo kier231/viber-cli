@@ -39,6 +39,8 @@ class Accounts:
                     account_id TEXT PRIMARY KEY REFERENCES accounts(id), worker_id TEXT NOT NULL,
                     token_hash TEXT NOT NULL, epoch TEXT NOT NULL, lease_until TEXT NOT NULL,
                     heartbeat_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS contact_removals (
+                    phone TEXT PRIMARY KEY,account_id TEXT NOT NULL,removed_at TEXT NOT NULL);
             ''')
             columns = {r[1] for r in db.execute('PRAGMA table_info(account_workers)')}
             for name,kind in (('machine','TEXT'),('process_id','INTEGER'),('process_started','TEXT'),('stopped_at','TEXT')):
@@ -144,6 +146,8 @@ class Accounts:
     def assert_phone(self, phone, account_id=None):
         account_id = account_id or self.account_id
         with closing(connect(self.target)) as db:
+            if db.execute('SELECT 1 FROM contact_removals WHERE phone=?', (international_phone(phone),)).fetchone():
+                raise PermissionError('This contact was removed by the owner.')
             row = db.execute('SELECT o.account_id,a.enabled,a.paused FROM contact_owners o JOIN accounts a ON a.id=o.account_id WHERE o.phone=?',(international_phone(phone),)).fetchone()
             if not row or row['account_id'] != account_id or not row['enabled'] or row['paused']:
                 raise PermissionError('Recipient ownership or account state blocks this operation.')
@@ -169,6 +173,8 @@ class Accounts:
             allowed=set()
             for chat in snapshot.get('chats',[]):
                 chat['phone']=international_phone(chat['phone'])
+                if db.execute('SELECT 1 FROM contact_removals WHERE phone=?', (chat['phone'],)).fetchone():
+                    continue
                 owner=db.execute('SELECT account_id FROM contact_owners WHERE phone=?',(chat['phone'],)).fetchone()
                 if owner and owner[0]!=self.account_id:
                     continue
@@ -183,7 +189,7 @@ class Accounts:
 
     def phones(self):
         with closing(connect(self.target)) as db:
-            return {r[0] for r in db.execute('SELECT phone FROM contact_owners WHERE account_id=?',(self.account_id,))}
+            return {r[0] for r in db.execute('SELECT phone FROM contact_owners WHERE account_id=? AND phone NOT IN (SELECT phone FROM contact_removals)',(self.account_id,))}
 
     def register(self, account_id, worker_id, token, epoch, confirmed_stopped=False):
         if not all(isinstance(v,str) and v for v in (account_id,worker_id,token,epoch)) or len(token)<32:

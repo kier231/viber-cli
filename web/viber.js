@@ -20,6 +20,7 @@
   const campaignPendingKey = 'viberoutreach-pending-campaign:' + selectedAccount;
   const campaignSelection = new Set();
   const clientDescriptionDrafts = new Map();
+  let contactFolders = [];
   let campaignPreview = null, campaignPending = null, campaignWorking = false, campaignsLoading = false;
   let campaignsSignature = null;
   let csrf, contacts = [], view = 'compose', busy = false, preview = null, conversationLead = null, contactPage = 0;
@@ -56,6 +57,7 @@
     }
     updateCompose();
     updateContactPagination();
+    updateContactFolder();
     updateCampaignControls();
   }
 
@@ -124,7 +126,17 @@
 
   async function loadContacts() {
     const selected = $('to').value, readSelected = $('read-contact').value;
-    contacts = await api('contacts');
+    const results = await Promise.all([api('contacts'), api('contact-folders')]);
+    contacts = results[0]; contactFolders = results[1];
+    for (const id of ['contact-folder', 'campaign-folder']) {
+      const select = $(id), previous = select.value;
+      select.replaceChildren(node('option', 'All contacts')); select.options[0].value = '';
+      for (const folder of contactFolders) {
+        const option = node('option', `${folder.name} (${folder.contact_count})`); option.value = folder.id; select.append(option);
+      }
+      select.value = contactFolders.some(folder => folder.id === previous) ? previous : '';
+    }
+    updateContactFolder();
     for (const [id, value] of [['to', selected], ['read-contact', readSelected]]) {
       const select = $(id); select.replaceChildren(node('option', 'Choose a saved contact')); select.options[0].value = '';
       for (const lead of contacts) { const option = node('option', `#${lead.id} · ${lead.company_name}${lead.viber_name ? ' · ' + lead.viber_name : ''} · ${lead.phone}`); option.value = lead.id; select.append(option); }
@@ -145,7 +157,16 @@
 
   function filteredContacts() {
     const search = $('contact-search').value.trim().toLocaleLowerCase();
-    return contacts.filter(lead => [lead.id, lead.phone, lead.company_name, lead.viber_name || '', lead.contact_name].join(' ').toLocaleLowerCase().includes(search));
+    const folder = $('contact-folder').value;
+    return contacts.filter(lead => (!folder || lead.folder_id === folder) && [lead.id, lead.phone, lead.company_name, lead.viber_name || '', lead.contact_name].join(' ').toLocaleLowerCase().includes(search));
+  }
+
+  function selectedContactFolder() { return $('contact-folder').value || contactFolders.find(folder => folder.is_main)?.id; }
+
+  function updateContactFolder() {
+    const folder = contactFolders.find(item => item.id === selectedContactFolder());
+    $('contact-folder-delete').disabled = busy || !$('contact-folder').value || !folder || !!folder.is_main || folder.contact_count > 0;
+    $('contact-folder-hint').textContent = folder ? `New contacts and CSV imports go into ${folder.name}. Main is protected; move contacts out before deleting another folder.` : '';
   }
 
   function updateContactPagination() {
@@ -170,6 +191,18 @@
         contactButton('Open', () => operation('open', { lead_id: lead.id }, 'Opening and verifying Viber in the background…')),
         contactButton('Read', async () => { const result = await operation('read', { lead_id: lead.id }, 'Reading the verified conversation…'); showConversation(result); await navigate('conversation'); }));
       row.append(text, actions); record.append(row);
+      const folderForm = node('form', null, 'contact-edit-form'), folderLabel = node('label', 'Folder'), folderSelect = node('select');
+      folderSelect.id = 'contact-folder-' + lead.id; folderLabel.htmlFor = folderSelect.id;
+      for (const folder of contactFolders) { const option = node('option', folder.name); option.value = folder.id; folderSelect.append(option); }
+      folderSelect.value = lead.folder_id; folderSelect.disabled = busy;
+      const folderSave = node('button', 'Move contact'); folderSave.type = 'submit'; folderSave.disabled = busy;
+      folderForm.append(folderLabel, folderSelect, folderSave);
+      folderForm.addEventListener('submit', action(async () => {
+        folderSave.disabled = true;
+        try { await api('contacts/move', {lead_id: lead.id, folder_id: folderSelect.value}); await loadContacts(); }
+        finally { folderSave.disabled = busy; }
+      }));
+      record.append(folderForm);
       const descriptionForm = node('form', null, 'contact-edit-form');
       const descriptionLabel = node('label', 'Opis klijenta'), descriptionInput = node('textarea');
       descriptionInput.id = 'client-description-' + lead.id;
@@ -509,7 +542,8 @@
 
   function matchingCampaignContacts() {
     const search = $('campaign-search').value.trim().toLocaleLowerCase();
-    return uniqueCampaignContacts().filter(lead => [lead.company_name, lead.phone, lead.viber_name || '', lead.id].join(' ').toLocaleLowerCase().includes(search));
+    const folder = $('campaign-folder').value;
+    return uniqueCampaignContacts().filter(lead => (!folder || lead.folder_id === folder) && [lead.company_name, lead.phone, lead.viber_name || '', lead.id].join(' ').toLocaleLowerCase().includes(search));
   }
 
   function updateCampaignControls() {
@@ -524,7 +558,7 @@
     $('campaign-activate').disabled = locked || !campaignPreview || !!expired || !$('campaign-confirm-check').checked;
     $('campaign-activate').textContent = campaignPreview ? `Schedule ${campaignPreview.recipients.length} messages` : 'Schedule campaign';
     $('campaign-review-expiry').textContent = expired ? 'This review expired or its first send time passed. Close it and review the campaign again.' : 'This review expires after ten minutes, or when the first send time passes.';
-    const available = uniqueCampaignContacts().length;
+    const available = matchingCampaignContacts().length;
     $('campaign-selection-count').textContent = `${campaignSelection.size} selected · ${available} unique phone numbers available. Duplicate phone numbers receive one message.`;
     $('campaign-select').textContent = `Select first ${$('campaign-batch-size').value || 1000}`;
     $('campaign-create').disabled = locked || campaignSelection.size === 0;
@@ -532,7 +566,8 @@
   }
 
   function renderCampaignContacts() {
-    const valid = new Set(uniqueCampaignContacts().map(lead => lead.id));
+    const folder = $('campaign-folder').value;
+    const valid = new Set(uniqueCampaignContacts().filter(lead => !folder || lead.folder_id === folder).map(lead => lead.id));
     for (const id of campaignSelection) if (!valid.has(id)) campaignSelection.delete(id);
     const list = $('campaign-contact-list'); list.replaceChildren();
     const matches = matchingCampaignContacts();
@@ -638,6 +673,7 @@
 
   $('campaign-start').value = localDateTime(new Date(Date.now() + 3600000));
   $('campaign-search').addEventListener('input', renderCampaignContacts);
+  $('campaign-folder').addEventListener('change', () => { campaignSelection.clear(); renderCampaignContacts(); });
   $('campaign-batch-size').addEventListener('input', updateCampaignControls);
   $('campaign-select').addEventListener('click', action(async () => {
     const count = Number($('campaign-batch-size').value);
@@ -654,7 +690,7 @@
     if (campaignPending) throw new Error('Check the saved campaign submission first.');
     if (!campaignSelection.size) throw new Error('Choose at least one recipient.');
     campaignPending = {kind: 'create', payload: {request_key: crypto.randomUUID(), name: $('campaign-name').value, text: $('campaign-text').value,
-      lead_ids: [...campaignSelection], schedule: {mode: 'datetime', local_time: $('campaign-start').value, time_zone: timeZone},
+      lead_ids: [...campaignSelection], folder_id: $('campaign-folder').value || undefined, schedule: {mode: 'datetime', local_time: $('campaign-start').value, time_zone: timeZone},
       interval_minutes: Number($('campaign-interval').value), daily_cap: Number($('campaign-cap').value), window_start: $('campaign-window-start').value, window_end: $('campaign-window-end').value}};
     localStorage.setItem(campaignPendingKey, JSON.stringify(campaignPending)); await recoverCampaignSubmission();
   }));
@@ -709,7 +745,7 @@
       let csv;
       try { csv = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer()); }
       catch { throw new Error('Save the file as CSV UTF-8, then import it again.'); }
-      const result = await api('contacts/import', {csv});
+      const result = await api('contacts/import', {csv, folder_id: selectedContactFolder()});
       $('csv-status').textContent = `Imported ${result.imported} leads into this account. Skipped ${result.duplicates_skipped} duplicates and ${result.other_account_skipped} numbers owned by another account. No messages sent.`;
       await loadContacts();
     } catch (error) {
@@ -718,8 +754,20 @@
     } finally { $('csv-import').disabled = busy; }
   }));
   $('contact-form').addEventListener('submit', action(async () => {
-    const result = await operation('contacts', { phone: $('contact-phone').value, company_name: $('contact-company').value }, 'Verifying the number in the selected Viber instance…');
+    const result = await operation('contacts', { phone: $('contact-phone').value, company_name: $('contact-company').value, folder_id: selectedContactFolder() }, 'Verifying the number in the selected Viber instance…');
     $('contact-form').reset(); $('add-panel').open = false; await loadContacts(); $('contact-status').textContent = `Added #${result.id}: ${result.company_name} · ${result.viber_name}.`;
+  }));
+  $('contact-folder-form').addEventListener('submit', action(async () => {
+    const folder = await api('contact-folders', {name: $('contact-folder-name').value});
+    $('contact-folder-form').reset(); await loadContacts();
+    $('contact-folder').value = folder.id; $('campaign-folder').value = folder.id;
+    campaignSelection.clear(); contactPage = 0; updateContactFolder(); renderContacts(); renderCampaignContacts();
+    $('contact-status').textContent = `Created ${folder.name}. Imports and new contacts now go into this folder.`;
+  }));
+  $('contact-folder').addEventListener('change', () => { contactPage = 0; updateContactFolder(); renderContacts(); });
+  $('contact-folder-delete').addEventListener('click', action(async () => {
+    await api('contact-folders/delete', {folder_id: $('contact-folder').value});
+    await loadContacts(); $('contact-status').textContent = 'Empty folder deleted.';
   }));
   $('contact-search').addEventListener('input', () => { contactPage = 0; renderContacts(); });
   $('contact-prev').addEventListener('click', () => { contactPage--; renderContacts(); });

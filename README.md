@@ -82,6 +82,16 @@ recipient checks and uncertain-send protections still apply. Zero-interval times
 are eligibility times: backlog does not expire after 15 minutes while waiting.
 Positive-interval campaigns and individual fixed-time sends retain that deadline.
 
+**Contacts** has account-specific folders, like the email app's named contact
+lists. Main is protected. Create a folder, select it, then add contacts or import
+CSV into it. Use **Move contact** to organize existing contacts, and select the
+folder in **Campaigns** to choose that folder's recipients. Empty custom folders
+can be deleted after their contacts have been moved elsewhere.
+
+Removed contact records are not recreated by inbox detection. Only an explicit
+add or CSV import reintroduces them, with a fresh incoming-message boundary.
+Completed and uncertain send markers stay retained to prevent duplicate sends.
+
 The daily outreach limit accepts any positive whole number, including 1,000 or
 more. It has no fixed upper cap. Automatic Codex replies run 24/7 independently
 of campaign hours and daily outreach allowances. Keep the controller running,

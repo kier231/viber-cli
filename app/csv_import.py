@@ -77,7 +77,7 @@ class CsvImport:
                 account_id TEXT NOT NULL, lead_id INTEGER NOT NULL, text TEXT NOT NULL,
                 PRIMARY KEY(account_id,lead_id))''')
 
-    def import_leads(self, text):
+    def import_leads(self, text, folder_id=None):
         rows = parse_csv(text)  # Validate the entire file before changing the ledger.
         service = self.service
         result = {'imported': 0, 'duplicates_skipped': 0, 'other_account_skipped': 0, 'lead_ids': []}
@@ -88,6 +88,7 @@ class CsvImport:
                 service.accounts.authenticate(service.accounts.token, service.account_id,
                                               service.accounts.worker_id, service.accounts.epoch)
             db.execute('BEGIN IMMEDIATE')
+            self.service.contact_folders.require(db, folder_id)
             seen = set()
             for item in rows:
                 phone = item['phone']
@@ -110,6 +111,7 @@ class CsvImport:
                         result['duplicates_skipped'] += 1
                         continue
                 lead = service.store.create_verified(phone, item['company'], None, db)
+                service.contact_folders.assign(db, lead.id, folder_id)
                 if item['description']:
                     db.execute('INSERT INTO contact_descriptions(account_id,lead_id,description,revision,updated_at) VALUES(?,?,?,1,?)',
                                (service.account_id, lead.id, item['description'], utc_now()))

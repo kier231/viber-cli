@@ -56,6 +56,8 @@ class LeadStore:
                 columns = {row[1] for row in db.execute("PRAGMA table_info(leads)")}
                 if "viber_name" not in columns:
                     db.execute("ALTER TABLE leads ADD COLUMN viber_name TEXT")
+                db.execute('''CREATE TABLE IF NOT EXISTS contact_removals (
+                    phone TEXT PRIMARY KEY,account_id TEXT NOT NULL,removed_at TEXT NOT NULL)''')
 
     def _connect(self) -> sqlite3.Connection:
         return connect(self.path)
@@ -97,6 +99,14 @@ class LeadStore:
             (phone, company, viber_name, company, created_at))
         contact_name = f"{company} | SJT-{row.lastrowid}"
         db.execute("UPDATE leads SET contact_name=? WHERE id=?", (contact_name, row.lastrowid))
+        removed = db.execute('DELETE FROM contact_removals WHERE phone=?', (phone,)).rowcount
+        if removed:
+            # Explicit re-add/import resumes fresh detection; do not replay old turns
+            # or remove an existing uncertain-send/per-conversation approval barrier.
+            db.execute('''UPDATE viber_conversations SET monitoring=1,active=0,
+                reply_since_rowid=COALESCE((SELECT MAX(m.rowid) FROM viber_messages m
+                    WHERE m.source_id=viber_conversations.source_id AND m.chat_id=viber_conversations.chat_id),0),
+                revision=revision+1 WHERE phone=?''', (phone,))
         return Lead(row.lastrowid, phone, company, viber_name, contact_name, created_at)
 
     def get(self, lead_id: int) -> Lead | None:

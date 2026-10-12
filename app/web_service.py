@@ -28,6 +28,7 @@ from app.storage import postgres
 from app.accounts import Accounts
 from app.job_queue import DesktopQueue, JobQueue
 from app.csv_import import CsvImport
+from app.contact_folders import ContactFolders
 
 
 def now():
@@ -134,6 +135,7 @@ class WebService:
             self.watcher.accounts = self.accounts
             self.watcher.inbox.accounts = self.accounts
         self.client_descriptions = ClientDescriptions(self)
+        self.contact_folders = ContactFolders(self)
         self.csv_import = CsvImport(self)
         self.replies = AutoReplies(self)
         self.watcher.on_ingest = self.replies.wake.set
@@ -284,12 +286,18 @@ class WebService:
                 owned = {r[0] for r in db.execute('SELECT phone FROM contact_owners WHERE account_id=?', (self.accounts.account_id,))}
             rows = [r for r in rows if r.phone in owned]
         descriptions = self.client_descriptions.all()
+        with closing(self.store._connect()) as db:
+            folders = self.contact_folders.members(db)
         return [{**asdict(lead), 'client_description': descriptions.get(lead.id, {}).get('description', ''),
+                 'folder_id': folders.get(lead.id, self.contact_folders.main_id),
                  'client_description_revision': descriptions.get(lead.id, {}).get('revision', 0)} for lead in rows]
 
     def add_contact(self, payload):
         phone = normalize_serbian_phone(payload.get("phone"))
         company = validate_company_name(payload.get("company_name"))
+        folder_id = payload.get('folder_id')
+        with closing(self.store._connect()) as db:
+            self.contact_folders.require(db, folder_id)
         self._check_new_contact(phone)
         def work():
             self._check_new_contact(phone)
@@ -316,6 +324,7 @@ class WebService:
                 if self.accounts:
                     self.accounts.claim(phone, self.account_id, db)
                 lead = self.store.create_verified(phone, company, name, db)
+                self.contact_folders.assign(db, lead.id, folder_id)
             self.event("CONTACT_ADDED", f"Added contact #{lead.id}: {lead.company_name}.")
             return asdict(lead)
         return self._enqueue("add-contact", work, {"phone": phone})
