@@ -36,9 +36,10 @@
   catch { showError(new Error('The saved campaign submission cannot be read. Check Your campaigns before creating another.')); }
 
   async function api(path, payload) {
+    const timeout = ['contacts/import', 'campaigns', 'campaign-review', 'campaign-activate'].includes(path) ? 60000 : 15000;
     const response = await fetch('/viber/api/' + path, { method: payload === undefined ? 'GET' : 'POST', credentials: 'same-origin', redirect: 'error',
       headers: { 'Content-Type': 'application/json', 'X-Viber-CSRF': csrf || '', 'X-Viber-Account': selectedAccount, ...(path === 'session' ? {'X-Viber-Browser': '1'} : {}) },
-      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }), signal: AbortSignal.timeout(15000) });
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }), signal: AbortSignal.timeout(timeout) });
     const result = await response.json();
     if (!response.ok) { const error = new Error(result.message || `Request failed (${response.status}).`); error.status = response.status; throw error; }
     return result;
@@ -523,8 +524,8 @@
     $('campaign-activate').textContent = campaignPreview ? `Schedule ${campaignPreview.recipients.length} messages` : 'Schedule campaign';
     $('campaign-review-expiry').textContent = expired ? 'This review expired or its first send time passed. Close it and review the campaign again.' : 'This review expires after ten minutes, or when the first send time passes.';
     const available = uniqueCampaignContacts().length;
-    $('campaign-selection-count').textContent = `${campaignSelection.size} selected · ${available} unique phone numbers available · maximum 100. Duplicate phone numbers receive one message.`;
-    $('campaign-select').textContent = `Select first ${$('campaign-batch-size').value || 100}`;
+    $('campaign-selection-count').textContent = `${campaignSelection.size} selected · ${available} unique phone numbers available. Duplicate phone numbers receive one message.`;
+    $('campaign-select').textContent = `Select first ${$('campaign-batch-size').value || 1000}`;
     $('campaign-create').disabled = locked || campaignSelection.size === 0;
     for (const button of $('campaign-list').querySelectorAll('button')) button.disabled = locked;
   }
@@ -541,7 +542,6 @@
       check.disabled = busy || campaignWorking || !!campaignPending;
       text.append(node('small', `${lead.phone} · #${lead.id}`)); label.append(check, text); list.append(label);
       check.addEventListener('change', () => {
-        if (check.checked && campaignSelection.size >= 100) { check.checked = false; showError(new Error('Select at most 100 unique numbers per campaign.')); return; }
         if (check.checked) campaignSelection.add(lead.id); else campaignSelection.delete(lead.id);
         updateCampaignControls();
       });
@@ -640,8 +640,12 @@
   $('campaign-batch-size').addEventListener('input', updateCampaignControls);
   $('campaign-select').addEventListener('click', action(async () => {
     const count = Number($('campaign-batch-size').value);
-    if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('Choose a batch size between 1 and 100.');
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error('Choose a positive whole-number batch size.');
     campaignSelection.clear(); for (const lead of matchingCampaignContacts().slice(0, count)) campaignSelection.add(lead.id);
+    renderCampaignContacts();
+  }));
+  $('campaign-select-all').addEventListener('click', action(async () => {
+    campaignSelection.clear(); for (const lead of matchingCampaignContacts()) campaignSelection.add(lead.id);
     renderCampaignContacts();
   }));
   $('campaign-clear').addEventListener('click', () => { campaignSelection.clear(); renderCampaignContacts(); });
@@ -694,6 +698,24 @@
   $('recover-send').addEventListener('click', action(recoverSend));
   $('new-message').addEventListener('click', () => { preview = null; $('body').value = ''; $('schedule-enabled').checked = false; $('send-result').textContent = ''; saveDraft(); updateCompose(); });
   $('compose-open').addEventListener('click', action(async () => { await operation('open', { lead_id: Number($('to').value) }, 'Opening and verifying this number in the background…'); await loadContacts(); $('send-result').textContent = 'Conversation opened without taking Windows focus.'; }));
+  $('csv-form').addEventListener('submit', action(async () => {
+    const file = $('csv-file').files[0];
+    if (!file) throw new Error('Choose a CSV file.');
+    if (file.size > 6 * 1024 * 1024) throw new Error('Choose a CSV smaller than 6 MB.');
+    $('csv-import').disabled = true;
+    $('csv-status').textContent = 'Importing leads…';
+    try {
+      let csv;
+      try { csv = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer()); }
+      catch { throw new Error('Save the file as CSV UTF-8, then import it again.'); }
+      const result = await api('contacts/import', {csv});
+      $('csv-status').textContent = `Imported ${result.imported} leads into this account. Skipped ${result.duplicates_skipped} duplicates and ${result.other_account_skipped} numbers owned by another account. No messages sent.`;
+      await loadContacts();
+    } catch (error) {
+      $('csv-status').textContent = 'Import did not finish. You can retry the file; existing numbers are skipped.';
+      throw error;
+    } finally { $('csv-import').disabled = busy; }
+  }));
   $('contact-form').addEventListener('submit', action(async () => {
     const result = await operation('contacts', { phone: $('contact-phone').value, company_name: $('contact-company').value }, 'Verifying the number in the selected Viber instance…');
     $('contact-form').reset(); $('add-panel').open = false; await loadContacts(); $('contact-status').textContent = `Added #${result.id}: ${result.company_name} · ${result.viber_name}.`;

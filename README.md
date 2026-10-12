@@ -31,8 +31,8 @@ Use `--email-port` if the existing service uses another loopback port.
 
 ViberOutreach provides compose with recipient review, contact search and
 pagination, verified Android contact creation, separate Viber name editing,
-background open/read/send, scheduled messages with cancellation, campaigns of
-up to 100 unique recipients, current-chat
+background open/read/send, scheduled messages with cancellation, CSV lead import,
+campaigns without a recipient-count limit, current-chat
 reading, saved visible conversation snapshots, send history, daily activity, an event log, and setup/control
 diagnostics. It shares `leads.sqlite3` with the CLI and uses the same business
 and Android contact names. Sending opens the phone through the dial pad,
@@ -67,12 +67,23 @@ schedule if needed. Cancellation fails once the send operation has started.
 ### Viber campaigns
 
 In **ViberOutreach → Campaigns**, open **Create a campaign**. Enter a name,
-select contacts individually or use **Select first 100**, and write the message
+select contacts individually, choose a batch size, or use **Select all matching**, and write the message
 template. Choose the start time, minutes between messages, maximum messages
 per day, and daily sending window. All times use **Europe/Warsaw**. Messages
 outside the window or above the daily cap continue on the next day. A campaign
-must finish within 365 days. Each campaign accepts 1–100 contacts and sends
+must finish within 365 days. Campaigns have no recipient-count limit and send
 once per unique phone number, even when the ledger has duplicate rows.
+
+In **Contacts → Import CSV leads**, upload a UTF-8 CSV (comma, semicolon or tab
+separated). Required columns are `phone` and `company_name`; `public_mobile` and
+`business` from the lead export are also accepted. Optional `opis_klijenta`,
+`client_description` or `codex_agent_note_sr` becomes private client context.
+Optional `sales_pitch_sr` or `outreach_message` becomes that lead's outreach text.
+Leave the campaign template blank to use those individual imported messages.
+Import saves contacts to the selected account without opening Viber or sending.
+The entire file is validated first. Existing numbers, duplicate rows, and numbers
+owned by another account are skipped without changing their saved data. Recipient
+verification still runs through the exact phone number before dispatch.
 
 Supported template variables are `{{company}}`, `{{phone}}`, `{{name}}`
 (saved Viber name, otherwise business name), and `{{viber_name}}` (requires a

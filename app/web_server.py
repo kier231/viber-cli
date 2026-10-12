@@ -103,8 +103,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) > 1:
             raise ValueError("Unsupported request framing.")
         length = int(self.headers.get("Content-Length", "0"))
-        if length < 0 or length > 1048576:
-            raise ValueError("Requests must be smaller than 1 MB.")
+        limit = 8 * 1048576 if parsed.path == '/viber/api/contacts/import' else 1048576
+        if length < 0 or length > limit:
+            raise ValueError(f"Requests must be smaller than {limit // 1048576} MB.")
         self.request_body = self.rfile.read(length) if length else b""
         if len(self.request_body) != length:
             raise ValueError("Incomplete request body.")
@@ -196,6 +197,8 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get('source_id'), payload.get('chat_id'), payload.get('enabled')))
             if path == "/viber/api/contacts":
                 result = service.add_contact(payload)
+            elif path == '/viber/api/contacts/import':
+                return self._reply(200, service.csv_import.import_leads(payload.get('csv')))
             elif path == '/viber/api/contacts/description':
                 return self._reply(200, service.client_descriptions.save(
                     payload.get('lead_id'), payload.get('description'), payload.get('revision')))

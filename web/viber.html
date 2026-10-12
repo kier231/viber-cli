@@ -73,17 +73,18 @@
     </section>
     <section id="campaigns" aria-labelledby="campaigns-title" hidden>
       <h2 id="campaigns-title">Viber campaigns</h2>
-      <p class="hint">Schedule up to 100 unique phone numbers per campaign. Choose the start time, spacing, and daily limit, then review the batch before activating it.</p>
+      <p class="hint">Schedule any number of unique phone numbers per campaign. Choose the start time, spacing, and daily limit, then review the batch before activating it.</p>
       <details id="campaign-create-panel" open>
         <summary>Create a campaign</summary>
         <form id="campaign-form">
           <fieldset id="campaign-fields">
             <label for="campaign-name">Campaign name</label><input id="campaign-name" maxlength="120" required placeholder="October outreach">
             <label for="campaign-search">Choose recipients</label><input id="campaign-search" type="search" placeholder="Search business, Viber name, or number">
-            <div class="campaign-selection-tools"><label for="campaign-batch-size">Batch size</label><input id="campaign-batch-size" type="number" min="1" max="100" value="100"><button id="campaign-select" type="button">Select first 100</button><button id="campaign-clear" type="button">Clear selection</button></div>
+            <div class="campaign-selection-tools"><label for="campaign-batch-size">Batch size</label><input id="campaign-batch-size" type="number" min="1" value="1000"><button id="campaign-select" type="button">Select first 1000</button><button id="campaign-select-all" type="button">Select all matching</button><button id="campaign-clear" type="button">Clear selection</button></div>
             <p id="campaign-selection-count" class="hint" role="status"></p>
             <div id="campaign-contact-list" class="campaign-contact-list" aria-label="Campaign recipients"></div>
-            <label for="campaign-text">Message template</label><textarea id="campaign-text" rows="3" maxlength="4000" required placeholder="Zdravo {{name}}, …"></textarea>
+            <label for="campaign-text">Message template</label><textarea id="campaign-text" rows="3" maxlength="4000" placeholder="Zdravo {{name}}, …"></textarea>
+            <p class="hint">Leave blank to use each contact's outreach message from CSV. Enter a template to use the same template for every selected contact.</p>
             <p class="hint">Use {{company}}, {{phone}}, or {{name}} (saved Viber name, otherwise business name). {{viber_name}} requires a saved Viber name. One line of text; no emoji.</p>
             <div class="campaign-grid">
               <label for="campaign-start">Start date and time</label><input id="campaign-start" type="datetime-local" required>
@@ -114,6 +115,15 @@
     <section id="contacts" aria-labelledby="contacts-title" hidden>
       <h2 id="contacts-title">Viber contacts</h2>
       <p class="hint">Contacts belong to the selected sending account. Business names and the person's Viber name are stored separately.</p>
+      <details id="csv-panel" class="campaign-card">
+        <summary>Import CSV leads</summary>
+        <form id="csv-form">
+          <label for="csv-file">CSV file</label><input id="csv-file" type="file" accept=".csv,text/csv" required>
+          <p class="hint">UTF-8 CSV with phone and company_name columns, or public_mobile and business. Optional: sales_pitch_sr (outreach message) and codex_agent_note_sr or opis_klijenta (client context). Commas, semicolons and tabs are supported. Duplicate and other-account numbers are skipped. Numbers are verified in Viber before sending.</p>
+          <button id="csv-import" type="submit">Import into selected account</button>
+        </form>
+        <p id="csv-status" role="status" aria-live="polite"></p>
+      </details>
       <details id="add-panel" class="campaign-card">
         <summary>Add a Viber contact</summary>
         <form id="contact-form">

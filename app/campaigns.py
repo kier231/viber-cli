@@ -13,6 +13,7 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from app.scheduling import parse_schedule, TIME_ZONE
+from app.models import Lead
 
 
 def utc_now():
@@ -114,6 +115,23 @@ class CampaignManager:
     def _event(self, db, kind, detail):
         db.execute("INSERT INTO web_events(created_at,kind,detail,account_id) VALUES(?,?,?,?)", (utc_now(), kind, detail,self.service.account_id))
 
+    def _leads(self, db, ids):
+        """Check large batches with one ledger read instead of a connection per lead."""
+        if any(type(value) is not int or value < 1 for value in ids):
+            raise ValueError('Choose saved contacts.')
+        selected = set(ids)
+        query = 'SELECT l.* FROM leads l'
+        args = ()
+        if self.service.accounts:
+            accounts = self.service.accounts
+            accounts.authenticate(accounts.token, accounts.account_id, accounts.worker_id, accounts.epoch)
+            query += ' JOIN contact_owners o ON o.phone=l.phone JOIN accounts a ON a.id=o.account_id WHERE a.id=? AND a.enabled=1 AND a.paused=0'
+            args = (self.service.account_id,)
+        result = {r['id']: Lead(**dict(r)) for r in db.execute(query, args) if r['id'] in selected}
+        if result.keys() != selected:
+            raise ValueError('A contact is missing or belongs to another account.')
+        return result
+
     def _get(self, db, campaign_id):
         if not isinstance(campaign_id, str):
             raise ValueError("Choose a campaign.")
@@ -151,13 +169,17 @@ class CampaignManager:
             name = payload.get("name")
             if not isinstance(name, str) or not name.strip() or len(name) > 120 or any(ord(c) < 32 for c in name):
                 raise ValueError("Enter a campaign name containing 1 to 120 characters.")
-            template = validate_message(payload.get("text"))
+            raw_template = payload.get('text', '')
+            if not isinstance(raw_template, str):
+                raise ValueError('Enter a message template or use imported messages.')
+            template = validate_message(raw_template) if raw_template.strip() else ''
             ids = payload.get("lead_ids")
-            if not isinstance(ids, list) or not 1 <= len(ids) <= 100:
-                raise ValueError("Select between 1 and 100 contacts.")
+            if not isinstance(ids, list) or not ids:
+                raise ValueError("Select at least one contact.")
+            selected = self._leads(db, ids)
             leads, phones = [], set()
             for lead_id in ids:
-                lead = self.service.lead(lead_id)
+                lead = selected[lead_id]
                 if lead.phone not in phones:
                     leads.append(lead)
                     phones.add(lead.phone)
@@ -171,7 +193,12 @@ class CampaignManager:
                      "window_end": payload.get("window_end", "17:00")}
             slots = campaign_slots(rules["start_at"], len(leads), rules)
             self._check_horizon(slots)
-            messages = [validate_message(expand_message(template, lead)) for lead in leads]
+            imported = {r['lead_id']: r['text'] for r in db.execute('SELECT lead_id,text FROM contact_outreach WHERE account_id=?', (self.service.account_id,))} if not template else {}
+            messages = []
+            for lead in leads:
+                if not template and not imported.get(lead.id):
+                    raise ValueError(f'Contact #{lead.id} has no imported outreach message. Enter a message template.')
+                messages.append(validate_message(expand_message(template, lead) if template else imported[lead.id]))
             campaign_id = str(uuid.uuid4())
             db.execute("INSERT INTO web_campaigns(id,creation_key,creation_hash,name,template,rules,state,created_at,updated_at,duplicates_skipped,account_id) "
                        "VALUES(?,?,?,?,?,?,'DRAFT',?,?,?,?)", (campaign_id, request_key, fingerprint, name.strip(), template,
@@ -239,9 +266,10 @@ class CampaignManager:
             slots = campaign_slots(start, len(rows), rules, used, last)
             self._check_horizon(slots)
             recipients = []
+            selected = self._leads(db, [row['lead_id'] for row in rows])
             for row, slot in zip(rows, slots):
                 expected = json.loads(row["lead_snapshot"])
-                lead = self.service.lead(row["lead_id"])
+                lead = selected[row['lead_id']]
                 if not same_recipient(expected, asdict(lead)):
                     raise ValueError(f"Contact #{lead.id} changed. Create a new draft for the updated recipient.")
                 recipients.append({"send_id": row["id"], "lead": asdict(lead), "viber_name": lead.viber_name or "",
@@ -278,8 +306,9 @@ class CampaignManager:
             if datetime.fromisoformat(preview["recipients"][0]["scheduled_at"]).timestamp() <= time.time():
                 raise ValueError("The reviewed start time passed. Review the remaining schedule again.")
             db.execute("BEGIN IMMEDIATE")
+            selected = self._leads(db, [item['lead']['id'] for item in preview['recipients']])
             for item in preview["recipients"]:
-                if asdict(self.service.lead(item["lead"]["id"])) != item["lead"]:
+                if asdict(selected[item['lead']['id']]) != item["lead"]:
                     raise ValueError("A contact changed after review. Review the campaign again.")
                 row = db.execute("UPDATE web_sends SET state='SCHEDULED',scheduled_at=?,lead_snapshot=?,viber_name=?,updated_at=? "
                                  "WHERE id=? AND campaign_id=? AND state IN ('DRAFT','SCHEDULED')",

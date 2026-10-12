@@ -27,6 +27,7 @@ from app.client_descriptions import ClientDescriptions
 from app.storage import postgres
 from app.accounts import Accounts
 from app.job_queue import DesktopQueue, JobQueue
+from app.csv_import import CsvImport
 
 
 def now():
@@ -132,6 +133,7 @@ class WebService:
             self.watcher.accounts = self.accounts
             self.watcher.inbox.accounts = self.accounts
         self.client_descriptions = ClientDescriptions(self)
+        self.csv_import = CsvImport(self)
         self.replies = AutoReplies(self)
         self.watcher.on_ingest = self.replies.wake.set
         self.pool = DesktopQueue(self) if self.managed else ThreadPoolExecutor(max_workers=1, thread_name_prefix='viber-desktop')

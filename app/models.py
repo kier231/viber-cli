@@ -86,8 +86,8 @@ class LeadStore:
         finally:
             db.close()
 
-    def create_verified(self, phone: str, company: str, viber_name: str, db) -> Lead:
-        """Save a desktop-verified contact in the caller's ownership transaction."""
+    def create_verified(self, phone: str, company: str, viber_name: str | None, db) -> Lead:
+        """Save a contact in its ownership transaction; unknown Viber names stay null."""
         company = validate_company_name(company)
         if db.execute("SELECT 1 FROM leads WHERE phone=?", (phone,)).fetchone():
             raise ValueError("This phone number is already in your contact ledger.")

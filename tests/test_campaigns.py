@@ -53,11 +53,11 @@ class CampaignTests(unittest.TestCase):
             time.sleep(.01)
         self.fail('Campaign operation did not finish')
 
-    def test_100_unique_recipients_are_drafts_until_reviewed_confirmation(self):
-        for index in range(3, 100):
+    def test_1000_unique_recipients_are_drafts_until_reviewed_confirmation(self):
+        for index in range(3, 1000):
             self.leads.append(self.service.store.create_with_android(f'+38164{index:07d}', f'Business {index}', lambda *_: None))
         draft = self.service.campaigns.create(self.payload())
-        self.assertEqual(draft['counts'], {'DRAFT': 100})
+        self.assertEqual(draft['counts'], {'DRAFT': 1000})
         self.assertEqual(draft['recipients'][0]['text'], 'Zdravo Business 0, Business 0!')
         self.assertEqual(self.service.records('scheduled'), [])
         self.assertIsNone(self.service._dispatch_due())
@@ -65,7 +65,7 @@ class CampaignTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.campaigns.activate({'preview_token': review['token'], 'confirmed': False, 'request_key': str(uuid.uuid4())})
         active, _ = self.activate(draft)
-        self.assertEqual(active['counts'], {'SCHEDULED': 100})
+        self.assertEqual(active['counts'], {'SCHEDULED': 1000})
         self.assertEqual(FakeDesktop.sent, [])
 
     def test_duplicate_phone_rows_receive_one_message(self):
@@ -90,7 +90,7 @@ class CampaignTests(unittest.TestCase):
             self.service.campaigns.create({**payload, 'text': 'Other message'})
 
     def test_invalid_batch_is_atomic(self):
-        for changes in ({'lead_ids': []}, {'lead_ids': [True]}, {'lead_ids': [1] * 101}, {'interval_minutes': 0},
+        for changes in ({'lead_ids': []}, {'lead_ids': [True]}, {'lead_ids': [999999]}, {'interval_minutes': 0},
                         {'daily_cap': 101}, {'window_end': '00:00'}, {'text': 'Hi {{invalid}}'}, {'text': 'Hi {{viber_name}}'}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.service.campaigns.create(self.payload(**changes))
