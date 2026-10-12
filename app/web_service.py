@@ -74,6 +74,7 @@ class WebService:
         self.pending = 0
         self.closed = False
         self.scheduler_stop = threading.Event()
+        self.scheduler_wake = threading.Event()
         self.scheduler = None
         self.campaigns = CampaignManager(self)
         if self.managed:
@@ -153,6 +154,7 @@ class WebService:
         with self.lock:
             self.closed = True
             self.scheduler_stop.set()
+            self.scheduler_wake.set()
         if self.scheduler:
             self.scheduler.join()
         self.replies.close()
@@ -246,6 +248,8 @@ class WebService:
                     com.CoUninitialize()
                 with self.lock:
                     self.pending -= 1
+                if not self.managed:
+                    self.scheduler_wake.set()
 
     def lead(self, lead_id):
         if isinstance(lead_id, bool) or not isinstance(lead_id, int):
@@ -463,6 +467,7 @@ class WebService:
 
     def _schedule_loop(self):
         while not self.scheduler_stop.is_set():
+            self.scheduler_wake.clear()
             try:
                 self._dispatch_due()
             except Exception as exc:
@@ -471,7 +476,7 @@ class WebService:
                 except Exception:
                     pass
                 self.scheduler_stop.wait(5)
-            self.scheduler_stop.wait(1)
+            self.scheduler_wake.wait(1)
 
     def _dispatch_due(self):
         """Claim one due message atomically, using the same worker as manual actions."""
@@ -484,7 +489,7 @@ class WebService:
                 db.execute("BEGIN IMMEDIATE")
                 for campaign in db.execute("SELECT id FROM web_campaigns WHERE state='ACTIVE'" + (" AND account_id=?" if self.managed else ''),(self.account_id,) if self.managed else ()).fetchall():
                     self.campaigns.reconcile(db, campaign["id"])
-                rows = db.execute("SELECT s.* FROM web_sends s LEFT JOIN web_campaigns c ON s.campaign_id=c.id "
+                rows = db.execute("SELECT s.*,c.rules AS campaign_rules FROM web_sends s LEFT JOIN web_campaigns c ON s.campaign_id=c.id "
                                   "WHERE s.state='SCHEDULED' AND s.scheduled_at<=? AND (s.campaign_id IS NULL OR c.state='ACTIVE') "
                                   + ("AND s.phone IN (SELECT phone FROM contact_owners WHERE account_id=?) " if self.managed else '') +
                                   "ORDER BY s.scheduled_at, s.created_at LIMIT 100", (current.isoformat(timespec="seconds"),self.account_id) if self.managed else (current.isoformat(timespec="seconds"),)).fetchall()
@@ -493,7 +498,8 @@ class WebService:
                     if campaign_id and self.campaigns._get(db, campaign_id)["state"] != "ACTIVE":
                         continue
                     late = current.timestamp() - datetime.fromisoformat(row["scheduled_at"]).timestamp()
-                    if late > MAX_LATENESS_SECONDS:
+                    queue_mode = bool(campaign_id and json.loads(row['campaign_rules'])['interval_minutes'] == 0)
+                    if late > MAX_LATENESS_SECONDS and not queue_mode:
                         error = "More than 15 minutes overdue. No message was sent; create a new schedule if needed."
                         db.execute("UPDATE web_sends SET state='MISSED',error=?,updated_at=? WHERE id=?",
                                    (error, now(), row["id"]))
@@ -535,7 +541,7 @@ class WebService:
 
     @staticmethod
     def _check_deadline(preview):
-        if preview.get("scheduled_at"):
+        if preview.get("scheduled_at") and not preview.get('queue_mode'):
             due = datetime.fromisoformat(preview["scheduled_at"]).timestamp()
             if time.time() - due > MAX_LATENESS_SECONDS:
                 raise MissedSchedule("More than 15 minutes overdue. No message was sent.")
@@ -545,6 +551,10 @@ class WebService:
         campaign_id = preview.get("campaign_id")
         try:
             with self.lock, closing(self.store._connect()) as db, db:
+                # Derive queue mode from the saved campaign, including restored jobs.
+                # A caller-supplied flag cannot bypass a fixed-time send deadline.
+                preview = {**preview, 'queue_mode': bool(campaign_id and
+                    json.loads(self.campaigns._get(db, campaign_id)['rules'])['interval_minutes'] == 0)}
                 deferred = self._campaign_gate(db, campaign_id, send_id)
                 if deferred:
                     return deferred

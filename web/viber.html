@@ -88,10 +88,11 @@
             <p class="hint">Use {{company}}, {{phone}}, or {{name}} (saved Viber name, otherwise business name). {{viber_name}} requires a saved Viber name. One line of text; no emoji.</p>
             <div class="campaign-grid">
               <label for="campaign-start">Start date and time</label><input id="campaign-start" type="datetime-local" required>
-              <label for="campaign-interval">Minutes between messages</label><input id="campaign-interval" type="number" min="1" max="1440" value="5" required>
+              <label for="campaign-interval">Minutes between messages</label><input id="campaign-interval" type="number" min="0" max="1440" value="5" required>
               <label for="campaign-cap">Maximum messages per day</label><input id="campaign-cap" type="number" min="1" max="100" value="100" required>
               <label for="campaign-window-start">Daily sending window</label><div class="campaign-window"><input id="campaign-window-start" type="time" value="09:00" aria-label="Sending window start" required><span>to</span><input id="campaign-window-end" type="time" value="17:00" aria-label="Sending window end" required></div>
             </div>
+            <p class="hint">Use 0 for no added wait: send one message at a time as fast as Viber allows. Ready Codex replies go ahead of waiting outreach. Daily limits and the sending window still apply.</p>
             <p class="hint">All dates and windows use Europe/Warsaw. Messages that do not fit in the daily window continue on the next day. Keep the local app running, Windows unlocked, and Viber restored behind another window.</p>
             <div class="actions"><button id="campaign-create" class="primary" type="submit">Create draft</button></div>
           </fieldset>
@@ -102,7 +103,7 @@
       <div id="campaign-review" class="confirmation" hidden>
         <h3 id="campaign-review-title">Review campaign</h3>
         <p id="campaign-review-meta"></p>
-        <p class="hint">Check every phone number, expanded message, and send time. Each recipient is verified through Viber's dial pad at dispatch. Business names stay unchanged; discovered Viber names are saved separately.</p>
+        <p class="hint">Check every phone number, expanded message, and send time. With a zero-minute interval, times show when messages become eligible; waiting messages remain queued. Each recipient is verified through Viber's dial pad at dispatch. Business names stay unchanged; discovered Viber names are saved separately.</p>
         <div id="campaign-review-recipients" class="campaign-recipient-review"></div>
         <label><input id="campaign-confirm-check" type="checkbox"><span>I reviewed these recipients, messages, and times, and authorize this campaign to send automatically.</span></label>
         <p id="campaign-review-expiry" class="hint"></p>

@@ -196,6 +196,11 @@ class DesktopQueue:
                     except Exception: pass
                 if self.stop.is_set(): return
                 self.stop.wait(.5)
+            finally:
+                if job:
+                    # Wake after durable completion/cooldown, so outreach resumes
+                    # without an extra polling delay and replies retain priority.
+                    self.service.scheduler_wake.set()
 
     def shutdown(self,wait=True):
         with self.lock: self.accepting=False

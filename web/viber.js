@@ -4,6 +4,7 @@
   const node = (tag, text, className) => { const element = document.createElement(tag); if (text != null) element.textContent = text; if (className) element.className = className; return element; };
   const timeZone = 'Europe/Warsaw';
   const date = value => value ? new Date(value).toLocaleString(undefined, {timeZone, timeZoneName: 'short'}) : '—';
+  const campaignSpacing = rules => rules.interval_minutes === 0 ? 'No added wait · ready Codex replies first' : `${rules.interval_minutes} minutes apart`;
   const localDateTime = value => {
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hourCycle:'h23'}).formatToParts(value).map(part => [part.type, part.value]));
     return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
@@ -563,7 +564,7 @@
     campaignPreview = await api('campaign-review', {campaign_id: id});
     $('campaign-review-title').textContent = 'Review: ' + campaignPreview.name;
     const items = campaignPreview.recipients, rules = campaignPreview.rules;
-    $('campaign-review-meta').textContent = `${items.length} remaining recipients · ${rules.interval_minutes} minutes apart · up to ${rules.daily_cap}/day · ${rules.window_start}–${rules.window_end} Europe/Warsaw. First: ${date(items[0].scheduled_at)}. Last: ${date(items.at(-1).scheduled_at)}.`;
+    $('campaign-review-meta').textContent = `${items.length} remaining recipients · ${campaignSpacing(rules)} · up to ${rules.daily_cap}/day · ${rules.window_start}–${rules.window_end} Europe/Warsaw. First${rules.interval_minutes === 0 ? ' eligible' : ''}: ${date(items[0].scheduled_at)}. Last${rules.interval_minutes === 0 ? ' eligible' : ''}: ${date(items.at(-1).scheduled_at)}.`;
     $('campaign-review-recipients').replaceChildren(...items.map((item, index) => campaignRecipientRow(item, index, true)));
     $('campaign-confirm-check').checked = false; updateCampaignControls();
     $('campaign-review').scrollIntoView({block: 'start', behavior: 'smooth'});
@@ -582,7 +583,7 @@
         const card = node('article', null, 'campaign-card');
         card.append(node('h3', item.name), node('span', item.state, 'viber-state'),
           node('p', `${item.total} recipients · ${Object.entries(item.counts).map(([state, count]) => `${count} ${state.toLowerCase()}`).join(' · ')}`),
-          node('p', `${item.rules.interval_minutes} minutes apart · up to ${item.rules.daily_cap}/day · ${item.rules.window_start}–${item.rules.window_end} Europe/Warsaw`, 'hint'));
+          node('p', `${campaignSpacing(item.rules)} · up to ${item.rules.daily_cap}/day · ${item.rules.window_start}–${item.rules.window_end} Europe/Warsaw`, 'hint'));
         if (item.next_at) card.append(node('p', `Next planned: ${date(item.next_at)} · Last planned: ${date(item.last_at)}`, 'hint'));
         if (item.reason) card.append(node('p', item.reason, 'warning'));
         if (item.duplicates_skipped) card.append(node('p', `${item.duplicates_skipped} duplicate phone selection(s) skipped.`, 'hint'));

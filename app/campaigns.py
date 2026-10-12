@@ -187,7 +187,7 @@ class CampaignManager:
             if not timing:
                 raise ValueError("Choose the campaign start time.")
             rules = {"start_at": timing["scheduled_at"], "time_zone": TIME_ZONE,
-                     "interval_minutes": integer(payload.get("interval_minutes", 5), "Interval", 1, 1440),
+                     "interval_minutes": integer(payload.get("interval_minutes", 5), "Interval", 0, 1440),
                      "daily_cap": integer(payload.get("daily_cap", 100), "Daily cap", 1, 100),
                      "window_start": payload.get("window_start", "09:00"),
                      "window_end": payload.get("window_end", "17:00")}
@@ -370,6 +370,13 @@ class CampaignManager:
                 start = max(datetime.fromisoformat(rows[0]["scheduled_at"]), datetime.now(timezone.utc)).isoformat(timespec="seconds")
                 used, last = self._usage(db, campaign_id)
                 for row, slot in zip(rows, campaign_slots(start, len(rows), rules, used, last)):
+                    # Zero-interval dates mean eligibility, not an exact deadline.
+                    # Already eligible rows stay ready; only moved future slots need writes.
+                    if rules['interval_minutes'] == 0 and (
+                        slot == row['scheduled_at'] or
+                        (datetime.fromisoformat(slot) <= datetime.now(timezone.utc) and
+                         datetime.fromisoformat(row['scheduled_at']) <= datetime.now(timezone.utc))):
+                        continue
                     db.execute("UPDATE web_sends SET scheduled_at=? WHERE id=?", (slot, row["id"]))
 
     def after_operation(self, operation_id):

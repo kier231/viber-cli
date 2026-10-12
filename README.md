@@ -74,6 +74,14 @@ outside the window or above the daily cap continue on the next day. A campaign
 must finish within 365 days. Campaigns have no recipient-count limit and send
 once per unique phone number, even when the ledger has duplicate rows.
 
+Set **Minutes between messages** to **0** to send sequentially with no added
+wait. Codex generates in the background; a ready reply runs after the current
+desktop action and before waiting outreach, then outreach resumes. The scheduler
+wakes on completed actions. Daily limits, the sending window, account ownership,
+recipient checks and uncertain-send protections still apply. Zero-interval times
+are eligibility times: backlog does not expire after 15 minutes while waiting.
+Positive-interval campaigns and individual fixed-time sends retain that deadline.
+
 In **Contacts → Import CSV leads**, upload a UTF-8 CSV (comma, semicolon or tab
 separated). Required columns are `phone` and `company_name`; `public_mobile` and
 `business` from the lead export are also accepted. Optional `opis_klijenta`,

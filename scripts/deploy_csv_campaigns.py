@@ -1,4 +1,4 @@
-"""Install CSV/campaign changes after graceful shutdown, preserving owner flags."""
+"""Install campaign/CSV queue changes after graceful shutdown, preserving owner flags."""
 from contextlib import closing
 from datetime import datetime
 import hashlib
@@ -51,7 +51,7 @@ def main():
                  'counts': {t: db.execute('SELECT COUNT(*) FROM ' + t).fetchone()[0] for t in
                             ('leads', 'viber_messages', 'viber_conversations', 'contact_owners')}}
     (backup / 'state.json').write_text(json.dumps(state, indent=2), encoding='utf-8')
-    files = ['app/csv_import.py', 'app/campaigns.py', 'app/models.py', 'app/web_service.py', 'app/web_server.py',
+    files = ['app/csv_import.py', 'app/campaigns.py', 'app/job_queue.py', 'app/models.py', 'app/web_service.py', 'app/web_server.py',
              'web/viber.html', 'web/viber.js', 'README.md', 'scripts/deploy_csv_campaigns.py']
     installed = {}
     attempted = []

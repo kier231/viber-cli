@@ -90,7 +90,7 @@ class CampaignTests(unittest.TestCase):
             self.service.campaigns.create({**payload, 'text': 'Other message'})
 
     def test_invalid_batch_is_atomic(self):
-        for changes in ({'lead_ids': []}, {'lead_ids': [True]}, {'lead_ids': [999999]}, {'interval_minutes': 0},
+        for changes in ({'lead_ids': []}, {'lead_ids': [True]}, {'lead_ids': [999999]}, {'interval_minutes': -1},
                         {'daily_cap': 101}, {'window_end': '00:00'}, {'text': 'Hi {{invalid}}'}, {'text': 'Hi {{viber_name}}'}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.service.campaigns.create(self.payload(**changes))
@@ -210,6 +210,12 @@ class CampaignTests(unittest.TestCase):
 
 
 class CampaignPlanningTests(unittest.TestCase):
+    def test_zero_interval_has_equal_eligibility_times_within_daily_window(self):
+        rules = {'interval_minutes': 0, 'daily_cap': 2, 'window_start': '09:00', 'window_end': '17:00'}
+        slots = campaign_slots('2026-10-12T07:00:00+00:00', 5, rules)
+        self.assertEqual(slots, ['2026-10-12T07:00:00+00:00'] * 2 +
+                         ['2026-10-13T07:00:00+00:00'] * 2 + ['2026-10-14T07:00:00+00:00'])
+
     def test_100_slots_obey_daily_cap_window_and_dst(self):
         rules = {'interval_minutes': 5, 'daily_cap': 40, 'window_start': '09:00', 'window_end': '17:00'}
         slots = campaign_slots('2026-10-24T06:00:00+00:00', 100, rules)
