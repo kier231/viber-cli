@@ -6,10 +6,13 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from app.campaigns import campaign_slots
 from app.web_service import WebService
+from app.viber import ViberError
+from app.reply_errors import ViberRetryable
 from test_web_service import FakeDesktop
 
 
@@ -155,6 +158,81 @@ class CampaignTests(unittest.TestCase):
         self.service._dispatch_due()
         self.assertEqual(self.service.campaigns.detail(active['id'])['state'], 'ACTIVE')
         self.assertEqual(len(FakeDesktop.sent), 1)
+
+    def test_unavailable_recipient_skips_and_next_recipient_dispatches(self):
+        draft = self.service.campaigns.create(self.payload(interval_minutes=0))
+        active, _ = self.activate(draft)
+        for item in active['recipients']:
+            self.due(item['id'])
+        error = 'Viber did not expose a stable named chat for that number. No message was sent.'
+        with patch.object(FakeDesktop, 'open_phone', side_effect=ViberRetryable(error, 'header_unstable')):
+            self.assertEqual(self.dispatch()['state'], 'FAILED')
+        detail = self.service.campaigns.detail(active['id'])
+        self.assertEqual(detail['state'], 'ACTIVE')
+        self.assertEqual(detail['counts'], {'SKIPPED': 1, 'SCHEDULED': 2})
+        self.assertEqual(FakeDesktop.sent, [])
+        with closing(self.service.store._connect()) as db:
+            row = db.execute('SELECT attempted_at,error FROM web_sends WHERE id=?', (active['recipients'][0]['id'],)).fetchone()
+            self.assertIsNone(row['attempted_at'])
+            self.assertEqual(row['error'], error)
+        self.assertEqual(self.dispatch()['state'], 'SUCCEEDED')
+        self.assertEqual(self.service.campaigns.detail(active['id'])['counts'],
+                         {'SKIPPED': 1, 'DISPATCHED': 1, 'SCHEDULED': 1})
+        self.assertEqual(FakeDesktop.sent, [active['recipients'][1]['text']])
+        self.service.close()
+        self.service = WebService(self.path, FakeDesktop, lambda *_: None)
+        self.assertEqual(self.dispatch()['state'], 'SUCCEEDED')
+        detail = self.service.campaigns.detail(active['id'])
+        self.assertEqual(detail['state'], 'COMPLETED')
+        self.assertEqual(detail['counts'], {'SKIPPED': 1, 'DISPATCHED': 2})
+        self.assertEqual(FakeDesktop.sent, [v['text'] for v in active['recipients'][1:]])
+
+    def test_all_unusable_recipients_complete_without_sending(self):
+        active, _ = self.activate(self.service.campaigns.create(self.payload(interval_minutes=0)))
+        for item in active['recipients']:
+            self.due(item['id'])
+        with patch.object(FakeDesktop, 'open_phone', return_value='Unknown'):
+            for _ in self.leads:
+                self.assertEqual(self.dispatch()['state'], 'FAILED')
+        detail = self.service.campaigns.detail(active['id'])
+        self.assertEqual(detail['state'], 'COMPLETED')
+        self.assertEqual(detail['counts'], {'SKIPPED': 3})
+        self.assertEqual(FakeDesktop.sent, [])
+
+    def test_other_pre_send_errors_still_pause(self):
+        active, _ = self.activate()
+        self.due(active['recipients'][0]['id'])
+        with patch.object(FakeDesktop, 'open_phone', side_effect=ViberError('Recipient ownership changed. No message was sent.')):
+            self.assertEqual(self.dispatch()['state'], 'FAILED')
+        detail = self.service.campaigns.detail(active['id'])
+        self.assertEqual(detail['state'], 'PAUSED')
+        self.assertEqual(detail['counts'], {'BLOCKED': 1, 'SCHEDULED': 2})
+        self.assertEqual(FakeDesktop.sent, [])
+
+    def test_attempt_marker_or_unknown_prevents_skip_even_with_matching_error(self):
+        attempted = datetime.now(timezone.utc).isoformat()
+        for state, marker in (('BLOCKED', attempted), ('UNKNOWN', attempted), ('UNKNOWN', None)):
+            with self.subTest(state=state, attempted_at=marker):
+                active, _ = self.activate()
+                with closing(self.service.store._connect()) as db, db:
+                    db.execute('UPDATE web_sends SET state=?,attempted_at=?,error=? WHERE id=?',
+                               (state, marker,
+                                'Viber did not expose a stable named chat for that number. No message was sent.', active['recipients'][0]['id']))
+                    self.service.campaigns.reconcile(db, active['id'])
+                detail = self.service.campaigns.detail(active['id'])
+                self.assertEqual(detail['state'], 'PAUSED')
+                self.assertEqual(detail['counts'], {state: 1, 'SCHEDULED': 2})
+
+    def test_skip_does_not_resume_owner_paused_campaign(self):
+        active, _ = self.activate()
+        self.service.campaigns.control(active['id'], 'pause')
+        with closing(self.service.store._connect()) as db, db:
+            db.execute("UPDATE web_sends SET state='BLOCKED',error=? WHERE id=?",
+                       ('Viber did not show a usable recipient name. No message was sent.', active['recipients'][0]['id']))
+            self.service.campaigns.reconcile(db, active['id'])
+        detail = self.service.campaigns.detail(active['id'])
+        self.assertEqual(detail['state'], 'PAUSED')
+        self.assertEqual(detail['counts'], {'BLOCKED': 1, 'SCHEDULED': 2})
 
     def test_missed_first_message_pauses_remaining_batch(self):
         active, _ = self.activate()

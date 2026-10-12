@@ -128,7 +128,12 @@ adjust after each attempt to preserve that spacing and the daily window.
 Use **Pause campaign**, **Review and resume**, or **Cancel campaign** to manage
 the batch. Pause and cancel stop remaining messages; an action already sending
 may finish. A blocked, missed (over 15 minutes overdue), or uncertain attempt
-automatically pauses the campaign. Inspect Viber before reviewing and resuming
+automatically pauses the campaign, except the recipient-opening errors that
+explicitly confirm Viber could not expose a stable usable name before typing.
+With no durable Send attempt, those recipients become **SKIPPED** and the batch
+continues automatically. Their error stays visible, and they are never retried.
+Other verification failures and uncertain sends still pause the batch.
+Inspect Viber before reviewing and resuming
 the remaining recipients. Failed or uncertain messages are never retried by
 Resume. Interrupted attempts become unknown on restart and pause the batch.
 The campaign list shows recipient counts, status, planned times, and individual

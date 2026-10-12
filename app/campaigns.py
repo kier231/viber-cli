@@ -16,6 +16,14 @@ from app.scheduling import parse_schedule, TIME_ZONE
 from app.models import Lead
 
 
+# These failures happen while opening the number, before typing or Send.
+# Do not infer safe skipping from a generic BLOCKED state or error substring.
+RECIPIENT_SKIP_ERRORS = frozenset({
+    'Viber did not expose a stable named chat for that number. No message was sent.',
+    'Viber did not show a usable recipient name. No message was sent.',
+})
+
+
 def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -362,6 +370,14 @@ class CampaignManager:
         campaign = self._get(db, campaign_id)
         if campaign["state"] != "ACTIVE":
             return
+        for row in db.execute("SELECT id,lead_id,error FROM web_sends WHERE campaign_id=? AND state='BLOCKED' AND attempted_at IS NULL", (campaign_id,)).fetchall():
+            if row['error'] not in RECIPIENT_SKIP_ERRORS:
+                continue
+            changed = db.execute("UPDATE web_sends SET state='SKIPPED',updated_at=? WHERE id=? AND state='BLOCKED' AND attempted_at IS NULL",
+                                 (utc_now(), row['id']))
+            if changed.rowcount:
+                self._event(db, 'CAMPAIGN_RECIPIENT_SKIPPED',
+                            f"{campaign['name']}: skipped contact #{row['lead_id']}; Viber could not open a verified recipient. No message was sent.")
         acknowledged = set(json.loads(campaign["acknowledged_errors"]))
         bad = next((row for row in db.execute("SELECT id,state FROM web_sends WHERE campaign_id=? AND state IN ('UNKNOWN','BLOCKED','MISSED')", (campaign_id,)) if row["id"] not in acknowledged), None)
         waiting = db.execute("SELECT id,scheduled_at FROM web_sends WHERE campaign_id=? AND state IN ('SCHEDULED','QUEUED','SUBMITTING') ORDER BY scheduled_at,rowid", (campaign_id,)).fetchall()
