@@ -82,6 +82,11 @@ recipient checks and uncertain-send protections still apply. Zero-interval times
 are eligibility times: backlog does not expire after 15 minutes while waiting.
 Positive-interval campaigns and individual fixed-time sends retain that deadline.
 
+The daily outreach limit accepts any positive whole number, including 1,000 or
+more. It has no fixed upper cap. Automatic Codex replies run 24/7 independently
+of campaign hours and daily outreach allowances. Keep the controller running,
+the PC awake and the Viber VM's Windows session unlocked for continuous replies.
+
 In **Contacts → Import CSV leads**, upload a UTF-8 CSV (comma, semicolon or tab
 separated). Required columns are `phone` and `company_name`; `public_mobile` and
 `business` from the lead export are also accepted. Optional `opis_klijenta`,

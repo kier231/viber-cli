@@ -1,9 +1,12 @@
 """Synthetic desktop tests: no real Viber connections or messages."""
 from contextlib import closing
+from datetime import datetime, timezone, timedelta
+import json
 import threading
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 
 from app.accounts import stamp
 from app.storage import connect
@@ -105,7 +108,6 @@ class ZeroWaitTests(unittest.TestCase):
     def test_zero_wait_respects_daily_limit_before_next_desktop_action(self):
         campaign_id = self.campaign()
         with closing(connect(self.service.store.path)) as db, db:
-            import json
             rules = json.loads(db.execute('SELECT rules FROM web_campaigns WHERE id=?', (campaign_id,)).fetchone()[0])
             rules['daily_cap'] = 1
             db.execute('UPDATE web_campaigns SET rules=? WHERE id=?', (json.dumps(rules), campaign_id))
@@ -115,3 +117,52 @@ class ZeroWaitTests(unittest.TestCase):
         self.assertIsNone(self.service._dispatch_due())
         self.assertEqual(self.fixture.desktop.sent, ['Outreach 0'])
         self.assertEqual(self.service.campaigns.detail(campaign_id)['state'], 'ACTIVE')
+
+    def test_daily_limit_accepts_1000_and_higher_without_an_artificial_cap(self):
+        for cap in (1000, 10000):
+            with self.subTest(cap=cap):
+                leads = self.service.csv_import.import_leads(f'phone,company_name\n064{cap:07d},Business {cap}\n')
+                draft = self.service.campaigns.create({
+                    'request_key': str(uuid.uuid4()), 'name': f'Cap {cap}', 'lead_ids': leads['lead_ids'],
+                    'text': 'Synthetic outreach', 'schedule': {'mode': 'delay', 'minutes': 60}, 'interval_minutes': 0,
+                    'daily_cap': cap, 'window_start': '09:00', 'window_end': '17:00'})
+                self.assertEqual(draft['rules']['daily_cap'], cap)
+
+    def test_codex_sends_at_2am_while_daytime_outreach_remains_scheduled(self):
+        campaign_id = self.campaign()
+        night = datetime(2026, 10, 12, 0, 0, tzinfo=timezone.utc)  # 02:00 Europe/Warsaw.
+
+        class NightClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return night.astimezone(tz) if tz else night.replace(tzinfo=None)
+
+        with closing(connect(self.service.store.path)) as db, db:
+            rules = json.loads(db.execute('SELECT rules FROM web_campaigns WHERE id=?', (campaign_id,)).fetchone()[0])
+            rules.update(window_start='09:00', window_end='17:00', daily_cap=1000)
+            db.execute('UPDATE web_campaigns SET rules=? WHERE id=?', (json.dumps(rules), campaign_id))
+            db.execute('UPDATE web_sends SET scheduled_at=? WHERE campaign_id=?', ((night-timedelta(hours=1)).isoformat(), campaign_id))
+        with patch('app.web_service.datetime', NightClock):
+            self.assertIsNone(self.service._dispatch_due())
+            self.fixture.incoming()
+            self.fixture.replies.tick()
+            self.fixture.wait_state('DISPATCHED')
+        self.assertEqual(self.fixture.desktop.sent, ['Zdravo!'])
+        self.assertEqual(self.service.campaigns.detail(campaign_id)['counts'], {'SCHEDULED': 3})
+
+    def test_codex_sends_after_daily_outreach_allowance_is_used(self):
+        campaign_id = self.campaign()
+        with closing(connect(self.service.store.path)) as db, db:
+            rules = json.loads(db.execute('SELECT rules FROM web_campaigns WHERE id=?', (campaign_id,)).fetchone()[0])
+            rules['daily_cap'] = 1
+            db.execute('UPDATE web_campaigns SET rules=? WHERE id=?', (json.dumps(rules), campaign_id))
+        self.assertIsNotNone(self.service._dispatch_due())
+        self.wait_for(lambda: not self.service.pending)
+        self.assertIsNone(self.service._dispatch_due())
+        self.fixture.incoming()
+        self.fixture.replies.tick()
+        self.fixture.wait_state('DISPATCHED')
+        self.assertEqual(self.fixture.desktop.sent, ['Outreach 0', 'Zdravo!'])
+        with closing(connect(self.service.store.path)) as db:
+            used, _ = self.service.campaigns._usage(db, campaign_id)
+            self.assertEqual(sum(used.values()), 1)

@@ -20,8 +20,10 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def integer(value, label, minimum, maximum):
-    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+def integer(value, label, minimum, maximum=None):
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum or (maximum is not None and value > maximum):
+        if maximum is None:
+            raise ValueError(f"{label} must be a whole number of at least {minimum}.")
         raise ValueError(f"{label} must be between {minimum} and {maximum}.")
     return value
 
@@ -188,7 +190,7 @@ class CampaignManager:
                 raise ValueError("Choose the campaign start time.")
             rules = {"start_at": timing["scheduled_at"], "time_zone": TIME_ZONE,
                      "interval_minutes": integer(payload.get("interval_minutes", 5), "Interval", 0, 1440),
-                     "daily_cap": integer(payload.get("daily_cap", 100), "Daily cap", 1, 100),
+                     "daily_cap": integer(payload.get("daily_cap", 100), "Daily cap", 1),
                      "window_start": payload.get("window_start", "09:00"),
                      "window_end": payload.get("window_end", "17:00")}
             slots = campaign_slots(rules["start_at"], len(leads), rules)
